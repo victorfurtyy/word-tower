@@ -1,24 +1,15 @@
-
 import json
 import random
 
 import socketio
 from app.utils.dictionary import verify_word, get_random_word, get_random_letter_from_word
 from app.classes.player import Player
-from fastapi import FastAPI as FastAPIReal
-from starlette.middleware.cors import CORSMiddleware
 
-# Cria o servidor Socket.IO ASGI
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins=['http://localhost:5173'])
-fastapi_app = FastAPIReal()
-fastapi_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+sio = socketio.AsyncServer(
+    async_mode='asgi', 
+    cors_allowed_origins=['http://localhost:5173']
 )
-app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)
+app = socketio.ASGIApp(sio)
 
 
 class GameManager:
@@ -34,16 +25,25 @@ class GameManager:
                 "round_number": 1,
                 "difficulty": "normal"  # Dificuldade padrão da sala
             }
+        
         player = Player(player_name, sid)
+        
+        # Se o jogo já estiver rolando, player entra desabilitado
+        if self.rooms[game_id]["game_state"] == "playing":
+            player.is_active = False
+        
         self.rooms[game_id]["players"].append(player)
         await sio.save_session(sid, {"game_id": game_id, "player_name": player_name})
         await sio.enter_room(sid, game_id)
+        
         # Notifica todos os jogadores sobre o novo player
         await self.broadcast_to_room(game_id, {
             "type": "player_joined",
             "player": player_name,
             "total_players": len(self.rooms[game_id]["players"]),
-            "difficulty": self.rooms[game_id]["difficulty"]
+            "difficulty": self.rooms[game_id]["difficulty"],
+            "game_state": self.rooms[game_id]["game_state"],
+            "is_active": player.is_active
         })
 
     async def disconnect(self, game_id: str, sid: str):
@@ -105,12 +105,12 @@ class GameManager:
         if winner:
             winner.score += 1
         
-        # Prepara para próxima rodada
+        # Prepara para próxima rodada - volta ao estado waiting (permite mudar dificuldade)
         for player in room["players"]:
             player.is_active = True  # Reativa todos os players
         
         room["round_number"] += 1
-        room["game_state"] = "waiting"
+        room["game_state"] = "waiting"  # Permite alterar dificuldade novamente
         
         await self.broadcast_to_room(game_id, {
             "type": "round_ended",
@@ -231,7 +231,11 @@ class GameManager:
         """Inicia uma nova partida com uma palavra aleatória"""
         room = self.rooms.get(game_id)
         if not room or len(room["players"]) < 2:
-            return
+            return False, "Mínimo 2 jogadores necessário"
+        
+        # Só permite iniciar se não estiver jogando
+        if room["game_state"] == "playing":
+            return False, "Jogo já em andamento"
         
         # Reativa todos os players
         for player in room["players"]:
@@ -254,15 +258,33 @@ class GameManager:
             "round_number": room["round_number"],
             "difficulty": room["difficulty"]
         })
+        return True, "Jogo iniciado com sucesso"
 
-    async def change_room_difficulty(self, game_id: str, difficulty: str):
-        """Altera a dificuldade da sala"""
+    async def change_room_difficulty(self, game_id: str, difficulty: str, requesting_player_sid: str):
+        """Altera a dificuldade da sala - apenas quando o jogo não está em andamento"""
         if difficulty.lower() not in ["normal", "easy", "caotic"]:
             difficulty = "normal"
         
         room = self.rooms.get(game_id)
         if not room:
-            return
+            return False, "Sala não encontrada"
+        
+        # Só permite alterar dificuldade se o jogo não estiver rolando
+        if room["game_state"] == "playing":
+            await sio.emit("game_event", {
+                "type": "difficulty_change_denied",
+                "reason": "Não é possível alterar dificuldade durante o jogo"
+            }, to=requesting_player_sid)
+            return False, "Jogo em andamento"
+        
+        # Verifica se o jogador está na sala
+        player_in_room = any(player.websocket == requesting_player_sid for player in room["players"])
+        if not player_in_room:
+            await sio.emit("game_event", {
+                "type": "difficulty_change_denied", 
+                "reason": "Você não está nesta sala"
+            }, to=requesting_player_sid)
+            return False, "Jogador não está na sala"
         
         room["difficulty"] = difficulty.lower()
         
@@ -271,6 +293,7 @@ class GameManager:
             "difficulty": room["difficulty"],
             "message": f"Dificuldade alterada para: {room['difficulty']}"
         })
+        return True, "Dificuldade alterada com sucesso"
 
 
 manager = GameManager()
@@ -293,29 +316,47 @@ async def submit_word(sid, data):
 async def start_new_game(sid, data):
     session = await sio.get_session(sid)
     game_id = session["game_id"]
-    await manager.start_new_game(game_id)
+    success, message = await manager.start_new_game(game_id)
+    
+    if not success:
+        await sio.emit("game_event", {
+            "type": "start_game_denied",
+            "reason": message
+        }, to=sid)
 
 @sio.event
 async def change_difficulty(sid, data):
     session = await sio.get_session(sid)
     game_id = session["game_id"]
     difficulty = data.get("difficulty", "normal")
-    await manager.change_room_difficulty(game_id, difficulty)
+    success, message = await manager.change_room_difficulty(game_id, difficulty, sid)
+    
+    if not success:
+        await sio.emit("game_event", {
+            "type": "error",
+            "message": message
+        }, to=sid)
 
 @sio.event
 async def leave_game(sid, data):
+    """Remove explicitamente um player da sala"""
     session = await sio.get_session(sid)
-    game_id = session["game_id"]
-    await manager.disconnect(game_id, sid)
-    await sio.leave_room(sid, game_id)
+    if session and session.get("game_id"):
+        await manager.disconnect(session["game_id"], sid)
+        await sio.leave_room(sid, session["game_id"])
+        # Remove a sessão do jogador
+        await sio.clear_session(sid)
+        await sio.emit("game_event", {"type": "left_game"}, to=sid)
 
 @sio.event
 async def disconnect(sid):
+    """Desconexão automática - limpa dados da sessão"""
     session = await sio.get_session(sid)
-    if session:
-        game_id = session.get("game_id")
-        if game_id:
-            await manager.disconnect(game_id, sid)
+    if session and session.get("game_id"):
+        await manager.disconnect(session["game_id"], sid)
+    # Remove a sessão do jogador desconectado
+    await sio.clear_session(sid)
+    print(f"Cliente {sid} desconectado e sessão limpa")
 
 ###
 @sio.event
@@ -323,18 +364,14 @@ async def connect(sid, environ):
     print(f"Cliente {sid} conectado")
     await sio.emit('message', 'Bem-vindo ao servidor!', room=sid)
 
+# Eventos Socket.IO para funcionalidades que antes eram HTTP
 @sio.event
-async def message(sid, data):
-    print(f"Mensagem de {sid}: {data}")
-    await sio.emit('message', f"Servidor recebeu: {data}", room=sid)
-
-
-@fastapi_app.post("/game/{game_id}/start")
-async def start_game_http(game_id: str):
-    await manager.start_new_game(game_id)
-    return {"message": "New game started"}
-
-@fastapi_app.post("/game/{game_id}/timeout/{player_name}")
-async def player_timeout(game_id: str, player_name: str):
-    await manager.eliminate_player(game_id, player_name)
-    return {"message": f"Player {player_name} eliminated due to timeout"}
+async def player_timeout(sid, data):
+    """Elimina player por timeout via WebSocket"""
+    session = await sio.get_session(sid)
+    if session and session.get("game_id"):
+        await manager.eliminate_player(session["game_id"], data.get("player_name"))
+        await sio.emit("game_event", {
+            "type": "timeout_handled", 
+            "player": data.get("player_name")
+        }, to=sid)

@@ -1,15 +1,10 @@
-from fastapi import FastAPI
-from app.ws.game_manager import app as websocket_app
+# Word Tower API - Socket.IO Backend
+import sys
+import os
+import uvicorn
 
-app = FastAPI(title="Word Tower API")
-
-# Inclui as rotas WebSocket
-app.mount("/ws", websocket_app)
-
-@app.get("/")
-async def root():
-    return {"message": "Word Tower API is running!"}
+# Adiciona o diretório pai ao path para encontrar o módulo 'app'
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("app.ws.game_manager:app", host="0.0.0.0", port=8000, reload=True)

@@ -1,9 +1,7 @@
-from fastapi import WebSocket
-
 class Player:
-    def __init__(self, name: str, websocket: WebSocket):
+    def __init__(self, name: str, websocket: str):
         self.name = name
-        self.websocket = websocket
+        self.websocket = websocket  # Armazena o SID do Socket.IO
         self.score = 0
         self.is_active = True  # Se o player está ativo na rodada atual
     
