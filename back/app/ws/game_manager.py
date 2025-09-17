@@ -1,17 +1,31 @@
+
 import json
 import random
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+import socketio
 from app.utils.dictionary import verify_word, get_random_word, get_random_letter_from_word
 from app.classes.player import Player
+from fastapi import FastAPI as FastAPIReal
+from starlette.middleware.cors import CORSMiddleware
 
-app = FastAPI()
+# Cria o servidor Socket.IO ASGI
+sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins=['http://localhost:5173'])
+fastapi_app = FastAPIReal()
+fastapi_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)
+
 
 class GameManager:
     def __init__(self):
         self.rooms: dict[str, dict] = {}  # {game_id: {players: [], current_word: str, game_state: str}}
 
-    async def connect(self, game_id: str, websocket: WebSocket, player_name: str):
-        await websocket.accept()
+    async def connect(self, game_id: str, sid: str, player_name: str):
         if game_id not in self.rooms:
             self.rooms[game_id] = {
                 "players": [],
@@ -20,10 +34,10 @@ class GameManager:
                 "round_number": 1,
                 "difficulty": "normal"  # Dificuldade padrão da sala
             }
-        
-        player = Player(player_name, websocket)
+        player = Player(player_name, sid)
         self.rooms[game_id]["players"].append(player)
-        
+        await sio.save_session(sid, {"game_id": game_id, "player_name": player_name})
+        await sio.enter_room(sid, game_id)
         # Notifica todos os jogadores sobre o novo player
         await self.broadcast_to_room(game_id, {
             "type": "player_joined",
@@ -32,18 +46,16 @@ class GameManager:
             "difficulty": self.rooms[game_id]["difficulty"]
         })
 
-    async def disconnect(self, game_id: str, websocket: WebSocket):
+    async def disconnect(self, game_id: str, sid: str):
         if game_id not in self.rooms:
             return
-            
         # Encontra e remove o player
         player_name = None
         for i, player in enumerate(self.rooms[game_id]["players"]):
-            if player.websocket == websocket:
+            if player.websocket == sid:
                 player_name = player.name
                 self.rooms[game_id]["players"].pop(i)
                 break
-        
         # Notifica outros jogadores sobre a saída
         if player_name:
             await self.broadcast_to_room(game_id, {
@@ -51,7 +63,6 @@ class GameManager:
                 "player": player_name,
                 "total_players": len(self.rooms[game_id]["players"])
             })
-        
         # Remove sala se vazia
         if not self.rooms[game_id]["players"]:
             del self.rooms[game_id]
@@ -111,57 +122,43 @@ class GameManager:
     async def broadcast_to_room(self, game_id: str, message: dict):
         if game_id not in self.rooms:
             return
-            
-        for player in self.rooms[game_id]["players"]:
-            try:
-                await player.websocket.send_text(json.dumps(message))
-            except:
-                # Player desconectado, remove da lista
-                pass
+        await sio.emit("game_event", message, room=game_id)
 
-    async def handle_word_submission(self, game_id: str, player_websocket: WebSocket, word: str):
+    async def handle_word_submission(self, game_id: str, sid: str, word: str):
         room = self.rooms.get(game_id)
         if not room:
             return
-        
         # Encontra o player atual
         current_player = None
         for player in room["players"]:
-            if player.websocket == player_websocket:
+            if player.websocket == sid:
                 current_player = player
                 break
-        
         if not current_player:
             return
-        
         # Valida a palavra
         word = word.lower().strip()
-        
         # Verifica se a palavra existe no dicionário
         if not verify_word(word, room["difficulty"]):
-            await player_websocket.send_text(json.dumps({
+            await sio.emit("game_event", {
                 "type": "word_invalid",
                 "word": word,
                 "reason": "Palavra não encontrada no dicionário!"
-            }))
+            }, to=sid)
             return
-        
         # Verifica se começa com a letra correta
         expected_letter = self.get_expected_letter(room)
         if expected_letter and word[0] != expected_letter:
-            await player_websocket.send_text(json.dumps({
+            await sio.emit("game_event", {
                 "type": "word_invalid",
                 "word": word,
                 "reason": f"A palavra deve começar com '{expected_letter}'"
-            }))
+            }, to=sid)
             return
-        
         # Palavra válida! Atualiza o jogo
         room["current_word"] = word
-        
         # Calcula a próxima letra e índice baseado no modo
         next_letter_info = self.get_next_letter_info(room, word)
-        
         # Notifica todos os jogadores
         await self.broadcast_to_room(game_id, {
             "type": "word_accepted",
@@ -275,58 +272,69 @@ class GameManager:
             "message": f"Dificuldade alterada para: {room['difficulty']}"
         })
 
+
 manager = GameManager()
 
-@app.websocket("/game/{game_id}")
-async def game(websocket: WebSocket, game_id: str):
-    await websocket.accept()
-    
-    try:
-        # Aguarda mensagem inicial de configuração do player
-        initial_data = await websocket.receive_text()
-        initial_message = json.loads(initial_data)
-        
-        if initial_message.get("type") != "join_game":
-            await websocket.close(code=4000, reason="First message must be 'join_game'")
-            return
-        
-        player_name = initial_message.get("player_name", "Anonymous")
-        
-        await manager.connect(game_id, websocket, player_name)
-        
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            
-            message_type = message.get("type")
-            
-            if message_type == "submit_word":
-                word = message.get("word", "")
-                await manager.handle_word_submission(game_id, websocket, word)
-            
-            elif message_type == "start_new_game":
-                await manager.start_new_game(game_id)
-            
-            elif message_type == "change_difficulty":
-                difficulty = message.get("difficulty", "normal")
-                await manager.change_room_difficulty(game_id, difficulty)
-            
-            elif message_type == "leave_game":
-                break
-                
-    except WebSocketDisconnect:
-        pass
-    finally:
-        await manager.disconnect(game_id, websocket)
+# Eventos Socket.IO
+@sio.event
+async def join_game(sid, data):
+    game_id = data.get("game_id")
+    player_name = data.get("player_name", "Anonymous")
+    await manager.connect(game_id, sid, player_name)
 
-# Rota para iniciar nova partida via HTTP (opcional)
-@app.post("/game/{game_id}/start")
+@sio.event
+async def submit_word(sid, data):
+    session = await sio.get_session(sid)
+    game_id = session["game_id"]
+    word = data.get("word", "")
+    await manager.handle_word_submission(game_id, sid, word)
+
+@sio.event
+async def start_new_game(sid, data):
+    session = await sio.get_session(sid)
+    game_id = session["game_id"]
+    await manager.start_new_game(game_id)
+
+@sio.event
+async def change_difficulty(sid, data):
+    session = await sio.get_session(sid)
+    game_id = session["game_id"]
+    difficulty = data.get("difficulty", "normal")
+    await manager.change_room_difficulty(game_id, difficulty)
+
+@sio.event
+async def leave_game(sid, data):
+    session = await sio.get_session(sid)
+    game_id = session["game_id"]
+    await manager.disconnect(game_id, sid)
+    await sio.leave_room(sid, game_id)
+
+@sio.event
+async def disconnect(sid):
+    session = await sio.get_session(sid)
+    if session:
+        game_id = session.get("game_id")
+        if game_id:
+            await manager.disconnect(game_id, sid)
+
+###
+@sio.event
+async def connect(sid, environ):
+    print(f"Cliente {sid} conectado")
+    await sio.emit('message', 'Bem-vindo ao servidor!', room=sid)
+
+@sio.event
+async def message(sid, data):
+    print(f"Mensagem de {sid}: {data}")
+    await sio.emit('message', f"Servidor recebeu: {data}", room=sid)
+
+
+@fastapi_app.post("/game/{game_id}/start")
 async def start_game_http(game_id: str):
     await manager.start_new_game(game_id)
     return {"message": "New game started"}
 
-# Rota para o front avisar que o tempo do player acabou
-@app.post("/game/{game_id}/timeout/{player_name}")
+@fastapi_app.post("/game/{game_id}/timeout/{player_name}")
 async def player_timeout(game_id: str, player_name: str):
     await manager.eliminate_player(game_id, player_name)
     return {"message": f"Player {player_name} eliminated due to timeout"}
