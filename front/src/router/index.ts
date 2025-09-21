@@ -1,12 +1,19 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import LobbyGame from '@/pages/LobbyGame.vue'
+import Teste from '@/pages/Teste.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
-      name: 'game',
-      component: () => import('../pages/Game.vue'),
+      name: 'start-screen',
+      component: LobbyGame,
+    },
+    {
+      path: '/teste',
+      name: 'teste',
+      component: Teste,
     }
   ],
 })
