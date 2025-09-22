@@ -6,13 +6,14 @@ defineProps<{
   borderColor?: string
   fontSize?: string
   modelValue?: string
+  required?: boolean
 }>()
 
 defineEmits(['update:modelValue'])
 </script>
 
 <template>
-  <input :type="type" :value="modelValue" :placeholder="placeholder"
+  <input :type="type" :value="modelValue" :placeholder="placeholder" :required="required"
     @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)" class="generic-input" />
 
 </template>

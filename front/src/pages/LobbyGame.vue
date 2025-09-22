@@ -6,6 +6,7 @@ import GenericModal from '@/components/Modal/GenericModal.vue'
 import GenericSlider from '@/components/Slider/GenericSlider.vue';
 import { Play, Settings } from 'lucide-vue-next';
 import { ref } from 'vue';
+import router from '@/router';
 
 const showStartScreen = ref(true)
 const showGameLobby = ref(false)
@@ -32,6 +33,33 @@ const openSettings = () => {
 
 const gameTimeIndex = ref(0);
 const timeOptions = ['10s', '15s', '20s', '30s'];
+
+const startGameRoom = () => {
+  const roomNameInput = document.getElementById('room_name') as HTMLInputElement | null;
+  const playerNameInput = document.getElementById('player_name') as HTMLInputElement | null;
+  
+  const roomName = roomNameInput ? roomNameInput.value.trim() : '';
+  const playerName = playerNameInput ? playerNameInput.value.trim() : '';
+  
+  if (!roomName) {
+    roomNameInput?.focus();
+    return;
+  }
+  
+  if (!playerName) {
+    playerNameInput?.focus();
+    return;
+  }
+  
+  // Salvar o nome do jogador no localStorage para usar na próxima tela
+  localStorage.setItem('pendingPlayerName', playerName);
+  
+  // Navegar para o jogo apenas com o ID da sala
+  router.push({ 
+    name: 'game', 
+    params: { gameId: roomName }
+  });
+}
 </script>
 
 <template>
@@ -80,14 +108,15 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
       <div class="form-group">
         <GenericLabel position="start" font-size="1rem" color="#502405">Nome do Jogador</GenericLabel>
         <GenericInput type="text" background-color="#FEE793" border-color="#96550B" placeholder="Digite seu nome"
-          font-size="1rem" />
+          font-size="1rem" id="player_name" />
       </div>
       <div class="form-group">
         <GenericLabel position="start" font-size="1rem" color="#502405">Nome da Sala</GenericLabel>
         <GenericInput type="text" background-color="#FEE793" border-color="#96550B" placeholder="Nome da sala"
-          font-size="1rem" />
+          font-size="1rem" id="room_name" :required="true" />
       </div>
-      <GenericButton aspect-ratio="3" background-color="#FFB107" border-color="#96550B" font-size="2rem">
+      <GenericButton aspect-ratio="3" background-color="#FFB107" border-color="#96550B" font-size="2rem"
+        :handle-click="startGameRoom">
         Iniciar Jogo
       </GenericButton>
     </div>
@@ -103,7 +132,6 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
   src: url('@/assets/fonts/tomo_bossa_black.woff') format('woff');
 }
 
-/* Background da página */
 .page-background {
   position: fixed;
   top: 0;
@@ -117,7 +145,6 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
   z-index: 0;
 }
 
-/* Tela inicial */
 .start-screen {
   position: fixed;
   top: 0;
@@ -158,7 +185,6 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
   height: auto;
 }
 
-/* Logo que flutua e sobe */
 .floating-logo {
   position: absolute;
   top: 50%;
@@ -180,7 +206,6 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
   }
 }
 
-/* Botão de configurações */
 .settings-button {
   position: absolute;
   top: 1rem;
@@ -189,7 +214,6 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
   animation: slideInFromLeft 0.6s ease-out 0.4s both;
 }
 
-/* Lobby do jogo */
 .game-lobby {
   position: absolute;
   left: 50%;
@@ -220,7 +244,6 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
   min-width: 15rem;
 }
 
-/* Conteúdo das configurações */
 .settings-content {
   padding: 1rem;
   text-align: center;
@@ -247,7 +270,6 @@ const timeOptions = ['10s', '15s', '20s', '30s'];
   font-size: 1.2rem;
 }
 
-/* Animações */
 @keyframes slideInFromLeft {
   from {
     opacity: 0;
