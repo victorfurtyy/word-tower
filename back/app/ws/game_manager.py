@@ -333,6 +333,8 @@ class GameManager:
         difficulty = room["difficulty"]
         
         if difficulty.lower() == "caotic":
+            # In chaotic mode, use the stored next_letter if it exists
+            # This ensures the letter stays the same until someone gets it right
             return room.get("next_letter", current_word[-1])
         else:
             return current_word[-1]
@@ -342,6 +344,8 @@ class GameManager:
         difficulty = room["difficulty"]
         
         if difficulty.lower() == "caotic":
+            # In chaotic mode, randomly select a letter from the accepted word
+            # This only happens when a word is successfully accepted
             word_lower = word.lower()
             valid_letters = "abcdefghijklmnopqrstuvwxyz"
             
@@ -356,11 +360,13 @@ class GameManager:
             chosen_index = random.choice(valid_positions)
             chosen_letter = word_lower[chosen_index]
             
+            # Store the new letter for future attempts
             room["next_letter"] = chosen_letter
             room["next_letter_index"] = chosen_index
             
             return {"letter": chosen_letter, "index": chosen_index}
         else:
+            # Normal and easy modes: always use the last letter
             last_index = len(word) - 1
             last_letter = word[-1].lower()
             
@@ -458,8 +464,8 @@ class GameManager:
             }, to=sid)
             return
         
-        next_letter_info = self.get_next_letter_info(room, room["current_word"])
-        expected_letter = next_letter_info["letter"].lower()
+        # Get the expected letter (this preserves the letter in chaotic mode)
+        expected_letter = self.get_expected_letter(room).lower()
         
         if word.lower()[0] != expected_letter:
             await sio.emit("game_event", {
@@ -469,12 +475,14 @@ class GameManager:
             }, to=sid)
             return
         
+        # Word accepted - update game state
         room["current_word"] = word.lower()
         room["used_words"].append(word.lower())
         
-        self.advance_turn(game_id)
-        
+        # Calculate the new letter for the next player (only after successful word)
         next_letter_info = self.get_next_letter_info(room, word.lower())
+        
+        self.advance_turn(game_id)
         await self.broadcast_to_room(game_id, {
             "type": "word_submitted",
             "player": player.name,

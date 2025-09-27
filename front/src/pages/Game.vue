@@ -135,6 +135,37 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
     })
   }
 })
+
+// Função para permitir apenas letras e espaços no input
+function filterLettersOnly(event: KeyboardEvent) {
+  const char = event.key
+  // Permite letras (a-z, A-Z), acentuadas (á, é, í, ó, ú, ã, õ, ç, etc) e espaços
+  const isLetter = /^[a-zA-ZÀ-ÿ\u00f1\u00d1]$/.test(char)
+  const isSpace = char === ' '
+  const isControlKey = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab', 'Escape'].includes(char)
+  const isModifierKey = event.ctrlKey || event.metaKey || event.altKey // Para Ctrl+A, Ctrl+C, Ctrl+V, etc
+  
+  if (!isLetter && !isSpace && !isControlKey && !isModifierKey) {
+    event.preventDefault()
+  }
+}
+
+// Função para filtrar texto colado, removendo caracteres não permitidos
+function handlePaste(event: ClipboardEvent) {
+  event.preventDefault()
+  const paste = event.clipboardData?.getData('text') || ''
+  // Remove todos os caracteres que não são letras ou espaços
+  const filteredText = paste.replace(/[^a-zA-ZÀ-ÿ\u00f1\u00d1 ]/g, '')
+  
+  // Atualiza o valor do input apenas com as letras e espaços válidos
+  const currentValue = inputWord.value
+  const input = event.target as HTMLInputElement
+  const start = input.selectionStart || 0
+  const end = input.selectionEnd || 0
+  
+  const newValue = currentValue.slice(0, start) + filteredText + currentValue.slice(end)
+  inputWord.value = newValue
+}
 </script>
 
 <template>
@@ -188,7 +219,7 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
         <h3>👥 Jogadores na Sala ({{ gameStore.players.length }})</h3>
         <div class="players-grid">
           <div v-for="player in gameStore.players" :key="player.id" class="player-card">
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name" :title="player.name">{{ player.name }}</span>
             <span v-if="player.id === gameStore.myPlayerId" class="you-badge">Você</span>
             <span v-if="player.is_host" class="host-badge">👑 Host</span>
             <span v-if="gameStore.currentPlayer && player.id === gameStore.currentPlayer.id" class="turn-badge">Sua vez!</span>
@@ -199,7 +230,7 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
         <!-- Indicador de turno -->
         <div v-if="gameStore.gameStarted && gameStore.currentPlayer" class="turn-indicator">
           <span v-if="gameStore.isMyTurn" class="my-turn">🎯 É sua vez de jogar!</span>
-          <span v-else class="other-turn">⏳ Vez de: {{ gameStore.currentPlayer.name }}</span>
+          <span v-else class="other-turn">⏳ Vez de: <span class="current-player-name" :title="gameStore.currentPlayer.name">{{ gameStore.currentPlayer.name }}</span></span>
         </div>
       </div>
 
@@ -232,7 +263,7 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
       <div v-else-if="!gameStore.gameStarted" class="host-only-message">
         <p>🔒 Apenas o host (criador da sala) pode configurar e iniciar o jogo.</p>
         <p v-if="gameStore.players.find((p: any) => p.is_host)">
-          Host atual: <strong>{{ gameStore.players.find((p: any) => p.is_host)?.name }}</strong>
+          Host atual: <strong class="host-name" :title="gameStore.players.find((p: any) => p.is_host)?.name">{{ gameStore.players.find((p: any) => p.is_host)?.name }}</strong>
         </p>
       </div>
 
@@ -269,6 +300,8 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
             v-model="inputWord" 
             type="text" 
             placeholder="Digite sua palavra aqui..."
+            @keydown="filterLettersOnly"
+            @paste="handlePaste"
             @keyup.enter="submitWord"
             :disabled="!gameStore.isConnected || !gameStore.isMyTurn"
             class="word-input"
@@ -298,7 +331,7 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
             }"
           >
             <div class="message-header">
-              <span class="message-sender">{{ message.sender }}</span>
+              <span class="message-sender" :title="message.sender">{{ message.sender }}</span>
               <span class="message-time">{{ message.timestamp }}</span>
             </div>
             <div class="message-content">{{ message.content }}</div>
@@ -542,9 +575,61 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
 }
 
 .player-name {
-  display: block;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
   font-weight: bold;
   margin-bottom: 0.3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-wrap: break-word;
+  line-height: 1.2;
+  max-height: calc(1.2em * 3);
+  cursor: help;
+  transition: opacity 0.2s ease;
+}
+
+.player-name:hover {
+  opacity: 0.8;
+}
+
+/* Truncate para nome do jogador atual no indicador de turno */
+.current-player-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-wrap: break-word;
+  line-height: 1.2;
+  max-height: calc(1.2em * 2);
+  cursor: help;
+  transition: opacity 0.2s ease;
+}
+
+.current-player-name:hover {
+  opacity: 0.8;
+}
+
+/* Truncate para nome do host */
+.host-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-wrap: break-word;
+  line-height: 1.2;
+  max-height: calc(1.2em * 2);
+  cursor: help;
+  transition: opacity 0.2s ease;
+}
+
+.host-name:hover {
+  opacity: 0.8;
 }
 
 .you-badge {
@@ -883,6 +968,20 @@ watch(() => gameStore.gameStarted, (gameStarted) => {
 
 .message-sender {
   font-weight: bold;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-wrap: break-word;
+  cursor: help;
+  max-width: 150px;
+  transition: opacity 0.2s ease;
+}
+
+.message-sender:hover {
+  opacity: 0.8;
 }
 
 .message-content {
