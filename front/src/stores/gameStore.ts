@@ -34,6 +34,12 @@ export const useGameStore = defineStore('game', () => {
   const myPlayerId = ref<string>('')
   const hostId = ref<string>('')  // ID do host da sala
 
+  // Timer state
+  const remainingTime = ref<number>(0)
+  const timerActive = ref<boolean>(false)
+  const isVictoryState = ref<boolean>(false)
+  const winner = ref<string>('')
+
   // Mensagens e status
   const messages = ref<GameMessage[]>([])
   const lastError = ref<string>('')
@@ -101,6 +107,22 @@ export const useGameStore = defineStore('game', () => {
     })
   }
 
+  // Função auxiliar para atualizar host
+  function updateHostInfo(playersData: Player[]): void {
+    if (playersData && playersData.length > 0) {
+      const host = playersData.find(p => p.is_host)
+      if (host) {
+        hostId.value = host.id
+      }
+    }
+  }
+
+  // Função auxiliar para resetar timer
+  function resetTimer(): void {
+    timerActive.value = false
+    remainingTime.value = 0
+  }
+
   // Handler principal para eventos do jogo
   function handleGameEvent(data: any): void {
     console.log('🎲 Evento do jogo:', data)
@@ -109,12 +131,7 @@ export const useGameStore = defineStore('game', () => {
       case 'player_joined':
         players.value = data.players || []
         currentPlayer.value = data.current_player || null
-
-        // Sempre define o hostId quando há players
-        const host = players.value.find(p => p.is_host)
-        if (host) {
-          hostId.value = host.id
-        }
+        updateHostInfo(players.value)
 
         // Salvar meu ID se for minha entrada
         if (data.player === playerName.value && data.player_id) {
@@ -125,15 +142,14 @@ export const useGameStore = defineStore('game', () => {
 
       case 'player_left':
         players.value = data.players || []
-        // Atualiza o host se necessário
-        if (players.value.length > 0) {
-          const host = players.value.find(p => p.is_host)
-          if (host) {
-            hostId.value = host.id
-          }
-        }
+        updateHostInfo(players.value)
         currentPlayer.value = data.current_player || null
-        addMessage('Sistema', `${data.player} saiu da sala`)
+
+        if (data.was_current_player) {
+          addMessage('Sistema', `${data.player} saiu durante sua vez - vez passou para o próximo jogador`)
+        } else {
+          addMessage('Sistema', `${data.player} saiu da sala`)
+        }
         break
 
       case 'game_started':
@@ -143,14 +159,7 @@ export const useGameStore = defineStore('game', () => {
         nextLetterIndex.value = data.next_letter_index || 0
         players.value = data.players || []
         currentPlayer.value = data.current_player || null
-
-        // Atualiza o host
-        if (players.value.length > 0) {
-          const host = players.value.find(p => p.is_host)
-          if (host) {
-            hostId.value = host.id
-          }
-        }
+        updateHostInfo(players.value)
         addMessage('Sistema', '🎮 Jogo iniciado!')
         break
 
@@ -165,26 +174,14 @@ export const useGameStore = defineStore('game', () => {
         nextLetterIndex.value = data.next_letter_index || 0
         players.value = data.players || []
         currentPlayer.value = data.current_player || null
-        // Atualiza o host
-        if (players.value.length > 0) {
-          const host = players.value.find(p => p.is_host)
-          if (host) {
-            hostId.value = host.id
-          }
-        }
+        updateHostInfo(players.value)
         addMessage(data.player || 'Alguém', data.word || '')
         break
 
       case 'player_eliminated':
         players.value = data.players || []
         currentPlayer.value = data.current_player || null
-        // Atualiza o host
-        if (players.value.length > 0) {
-          const host = players.value.find(p => p.is_host)
-          if (host) {
-            hostId.value = host.id
-          }
-        }
+        updateHostInfo(players.value)
         addMessage('Sistema', `${data.player} foi eliminado!`)
         break
 
@@ -231,6 +228,61 @@ export const useGameStore = defineStore('game', () => {
       case 'word_rejected':
         lastError.value = data.reason || 'Palavra rejeitada'
         addMessage('Sistema', `❌ Palavra rejeitada: ${data.reason}`)
+        break
+
+      case 'timer_started':
+        timerActive.value = true
+        remainingTime.value = data.remaining_time || 30
+        currentPlayer.value = data.current_player || null
+        break
+
+      case 'timer_update':
+        remainingTime.value = data.remaining_time || 0
+        currentPlayer.value = data.current_player || null
+        break
+
+      case 'time_penalty':
+        remainingTime.value = data.remaining_time || 0
+        currentPlayer.value = data.current_player || null
+        addMessage('Sistema', `⏰ Penalização de tempo: -${data.penalty}s`)
+        break
+
+      case 'time_up':
+        timerActive.value = false
+        remainingTime.value = 0
+        players.value = data.players || []
+        currentPlayer.value = data.current_player || null
+        // Atualiza o host
+        if (players.value.length > 0) {
+          const host = players.value.find(p => p.is_host)
+          if (host) {
+            hostId.value = host.id
+          }
+        }
+        addMessage('Sistema', `⏰ Tempo esgotado! ${data.eliminated_player} foi eliminado`)
+        break
+
+      case 'victory':
+        isVictoryState.value = true
+        winner.value = data.winner || 'Nenhum vencedor'
+        gameStarted.value = false
+        resetTimer()
+        players.value = data.players || []
+        addMessage('Sistema', `🏆 Vitória! Vencedor: ${data.winner}`)
+        break
+
+      case 'game_reset':
+        gameStarted.value = false
+        isVictoryState.value = false
+        winner.value = ''
+        resetTimer()
+        currentWord.value = ''
+        nextLetter.value = ''
+        nextLetterIndex.value = 0
+        currentPlayer.value = null
+        players.value = data.players || []
+        updateHostInfo(players.value)
+        addMessage('Sistema', '🔄 Jogo reiniciado')
         break
 
       default:
@@ -322,6 +374,12 @@ export const useGameStore = defineStore('game', () => {
     hostId,
     messages,
     lastError,
+
+    // Timer state
+    remainingTime,
+    timerActive,
+    isVictoryState,
+    winner,
 
     // Computed
     isConnected,

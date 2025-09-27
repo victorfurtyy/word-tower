@@ -1,9 +1,16 @@
 import json
 import random
+import asyncio
+import time
+from typing import Optional
 
 import socketio
 from app.utils.dictionary import verify_word, get_random_word, get_random_letter_from_word
 from app.classes.player import Player
+
+TURN_TIME_LIMIT = 30
+PENALTY_TIME = 5
+MIN_TIME_REMAINING = 3
 
 sio = socketio.AsyncServer(
     async_mode='asgi', 
@@ -17,6 +24,7 @@ class GameManager:
     
     def __init__(self):
         self.rooms: dict[str, dict] = {}
+        self.timer_tasks: dict[str, asyncio.Task] = {}
 
     async def connect(self, game_id: str, sid: str, player_name: str):
         """Connect a player to a game room."""
@@ -29,7 +37,9 @@ class GameManager:
                 "difficulty": "normal",
                 "current_player_index": 0,
                 "turn_order": [],
-                "used_words": []
+                "used_words": [],
+                "turn_start_time": None,
+                "remaining_time": TURN_TIME_LIMIT
             }
         
         is_host = len(self.rooms[game_id]["players"]) == 0
@@ -68,34 +78,77 @@ class GameManager:
         
         room = self.rooms[game_id]
         
+        disconnected_player = None
         player_name = None
         was_host = False
+        was_current_player = False
+        
+        current_player_info = self.get_current_player_info(game_id) if room["game_state"] == "playing" else None
+        
         for i, player in enumerate(room["players"]):
             if player.websocket == sid:
+                disconnected_player = player
                 player_name = player.name
                 was_host = player.is_host
+                was_current_player = (current_player_info and player.id == current_player_info["id"])
                 room["players"].pop(i)
                 break
+        
+        if not disconnected_player:
+            return
         
         if was_host and room["players"]:
             room["players"][0].is_host = True
         
         remaining_players = len(room["players"])
         
-        if room["game_state"] == "playing" and remaining_players < 2:
-            room["game_state"] = "waiting"
-            room["current_word"] = ""
-            room["turn_order"] = []
-            room["current_player_index"] = 0
-            room["used_words"] = []
+        if room["game_state"] == "playing":
+            await self._stop_turn_timer(game_id)
             
-            await self.broadcast_to_room(game_id, {
-                "type": "game_ended",
-                "reason": "Insufficient players (minimum 2 required)",
-                "players": self.get_players_info(game_id)
-            })
-        
-        if player_name:
+            active_players = [p for p in room["players"] if p.is_active]
+            
+            if len(active_players) <= 1:
+                winner = active_players[0] if active_players else None
+                print(f"🏆 Victory condition met after disconnect - Winner: {winner.name if winner else 'None'}")
+                await self._declare_victory(game_id, winner)
+            elif remaining_players < 2:
+                room["game_state"] = "waiting"
+                room["current_word"] = ""
+                room["turn_order"] = []
+                room["current_player_index"] = 0
+                room["used_words"] = []
+                
+                await self.broadcast_to_room(game_id, {
+                    "type": "game_ended",
+                    "reason": "Insufficient players (minimum 2 required)",
+                    "players": self.get_players_info(game_id)
+                })
+            else:
+                if was_current_player:
+                    print(f"🔄 Current player disconnected, advancing turn")
+                    self.advance_turn(game_id)
+                    next_player = self.get_current_player_info(game_id)
+                    if next_player:
+                        print(f"⏰ Starting timer for next player: {next_player['name']}")
+                        await self._start_turn_timer(game_id)
+                    else:
+                        print("❌ No next player found after advancing turn")
+                else:
+                    print(f"🔄 Non-current player disconnected, updating turn order")
+                    room["turn_order"] = [p.id for p in active_players]
+                    if room.get("current_player_index", 0) >= len(room["turn_order"]):
+                        room["current_player_index"] = 0
+                        print(f"🔧 Reset player index to 0 due to out of bounds")
+                
+                await self.broadcast_to_room(game_id, {
+                    "type": "player_left",
+                    "player": player_name,
+                    "players": self.get_players_info(game_id),
+                    "total_players": remaining_players,
+                    "current_player": self.get_current_player_info(game_id),
+                    "was_current_player": was_current_player
+                })
+        else:
             await self.broadcast_to_room(game_id, {
                 "type": "player_left",
                 "player": player_name,
@@ -145,19 +198,214 @@ class GameManager:
         if not room:
             return
         
+        current_player = self.get_current_player_info(game_id)
+        if current_player and current_player["id"] == eliminated_player.id:
+            await self._stop_turn_timer(game_id)
+        
         active_players = [p for p in room["players"] if p.is_active]
         
         if len(active_players) <= 1:
             winner = active_players[0] if active_players else None
-            await self.end_round(game_id, winner)
+            await self._declare_victory(game_id, winner)
+            return
+        
+        # If eliminated player was current player, advance turn
+        if current_player and current_player["id"] == eliminated_player.id:
+            self.advance_turn(game_id)
+            
+            # Ensure we have a valid next player after advancing
+            next_player = self.get_current_player_info(game_id)
+            if not next_player and active_players:
+                # Fallback: reset to first active player if current player is null
+                room["current_player_index"] = 0
+                room["turn_order"] = [p.id for p in active_players]
+                next_player = self.get_current_player_info(game_id)
+            
+            if next_player:
+                await self._start_turn_timer(game_id)
+        
+        # Get final state for broadcast - ensure current_player is never None
+        final_players_info = self.get_players_info(game_id)
+        final_current_player = self.get_current_player_info(game_id)
+        
+        # Guarantee current_player is never null for active game
+        if not final_current_player and active_players and room["game_state"] == "playing":
+            # Emergency fallback: set first active player as current
+            room["current_player_index"] = 0
+            room["turn_order"] = [p.id for p in active_players]
+            final_current_player = self.get_current_player_info(game_id)
+        
+        final_active_count = len(active_players)
         
         await self.broadcast_to_room(game_id, {
             "type": "player_eliminated",
             "player": eliminated_player.name,
             "player_id": eliminated_player.id,
-            "players": [p.name for p in room["players"]],
-            "active_players": len(active_players),
-            "eliminated_player": eliminated_player.name
+            "players": final_players_info,
+            "active_players": final_active_count,
+            "eliminated_player": eliminated_player.name,
+            "current_player": final_current_player
+        })
+
+    async def _start_turn_timer(self, game_id: str):
+        """Start the timer for the current player's turn."""
+        room = self.rooms.get(game_id)
+        if not room or room["game_state"] != "playing":
+            return
+            
+        await self._stop_turn_timer(game_id)
+        
+        room["turn_start_time"] = time.time()
+        room["remaining_time"] = TURN_TIME_LIMIT
+        
+        async def countdown():
+            try:
+                while room.get("remaining_time", 0) > 0 and game_id in self.timer_tasks:
+                    await asyncio.sleep(1)
+                    
+                    if (game_id not in self.rooms or 
+                        self.rooms[game_id]["game_state"] != "playing" or
+                        game_id not in self.timer_tasks):
+                        break
+                        
+                    room["remaining_time"] -= 1
+                    
+                    await self.broadcast_to_room(game_id, {
+                        "type": "timer_update",
+                        "remaining_time": room["remaining_time"],
+                        "current_player": self.get_current_player_info(game_id)
+                    })
+                    
+                    if room["remaining_time"] <= 0:
+                        if game_id in self.timer_tasks:
+                            await self._handle_time_up(game_id)
+                        break
+            except asyncio.CancelledError:
+                pass
+        
+        timer_task = asyncio.create_task(countdown())
+        self.timer_tasks[game_id] = timer_task
+        
+        await self.broadcast_to_room(game_id, {
+            "type": "timer_started",
+            "remaining_time": room["remaining_time"],
+            "current_player": self.get_current_player_info(game_id)
+        })
+    
+    async def _stop_turn_timer(self, game_id: str):
+        """Stop the current timer for a game."""
+        if game_id in self.timer_tasks:
+            timer_task = self.timer_tasks[game_id]
+            timer_task.cancel()
+            del self.timer_tasks[game_id]
+            
+            try:
+                await timer_task
+            except asyncio.CancelledError:
+                pass
+        
+        room = self.rooms.get(game_id)
+        if room:
+            room["remaining_time"] = 0
+    
+    async def _apply_time_penalty(self, game_id: str):
+        """Apply time penalty for wrong answer."""
+        room = self.rooms.get(game_id)
+        if not room:
+            return
+            
+        room["remaining_time"] = max(
+            MIN_TIME_REMAINING, 
+            room.get("remaining_time", 0) - PENALTY_TIME
+        )
+        
+        await self.broadcast_to_room(game_id, {
+            "type": "time_penalty",
+            "remaining_time": room["remaining_time"],
+            "penalty": PENALTY_TIME,
+            "current_player": self.get_current_player_info(game_id)
+        })
+    
+    async def _handle_time_up(self, game_id: str):
+        """Handle when a player's time runs out - eliminate player and advance turn."""
+        current_player_info = self.get_current_player_info(game_id)
+        if not current_player_info:
+            return
+            
+        room = self.rooms.get(game_id)
+        if not room:
+            return
+        
+        await self._stop_turn_timer(game_id)
+        
+        current_player = None
+        for player in room["players"]:
+            if player.id == current_player_info["id"]:
+                current_player = player
+                break
+        
+        if current_player:
+            current_player.is_active = False
+            
+            await self.broadcast_to_room(game_id, {
+                "type": "time_up",
+                "eliminated_player": current_player_info["name"],
+                "player_id": current_player_info["id"],
+                "reason": "Tempo esgotado"
+            })
+            
+            await self._handle_player_elimination(game_id, current_player)
+    
+    async def _declare_victory(self, game_id: str, winner):
+        """Declare victory and prepare for game reset."""
+        room = self.rooms.get(game_id)
+        if not room:
+            return
+            
+        await self._stop_turn_timer(game_id)
+        
+        room["game_state"] = "victory"
+        room["winner"] = winner.name if winner else "Nenhum vencedor"
+        
+        await self.broadcast_to_room(game_id, {
+            "type": "victory",
+            "winner": winner.name if winner else "Nenhum vencedor",
+            "winner_id": winner.id if winner else None,
+            "players": self.get_players_info(game_id)
+        })
+        
+        async def auto_reset():
+            await asyncio.sleep(5)
+            if game_id in self.rooms and self.rooms[game_id]["game_state"] == "victory":
+                await self.reset_game(game_id)
+                
+        asyncio.create_task(auto_reset())
+
+    async def reset_game(self, game_id: str):
+        """Reset the game to waiting state after victory."""
+        room = self.rooms.get(game_id)
+        if not room:
+            return
+            
+        await self._stop_turn_timer(game_id)
+        
+        room["game_state"] = "waiting"
+        room["current_word"] = ""
+        room["used_words"] = []
+        room["turn_order"] = []
+        room["current_player_index"] = 0
+        room["round_number"] = 1
+        room["winner"] = None
+        room["remaining_time"] = TURN_TIME_LIMIT
+        
+        for player in room["players"]:
+            player.is_active = True
+        
+        await self.broadcast_to_room(game_id, {
+            "type": "game_reset",
+            "game_state": "waiting",
+            "players": self.get_players_info(game_id),
+            "message": "Game has been reset. Host can start a new game."
         })
 
     async def end_round(self, game_id: str, winner: Player = None):
@@ -202,23 +450,32 @@ class GameManager:
         """Get information about the current player's turn."""
         room = self.rooms.get(game_id)
         if not room or room["game_state"] != "playing":
+            print(f"❌ No room or game not playing for {game_id}")
             return None
         
-        if not room.get("turn_order"):
+        turn_order = room.get("turn_order", [])
+        if not turn_order:
+            print(f"❌ No turn order for {game_id}")
             return None
             
         current_index = room.get("current_player_index", 0)
-        if current_index >= len(room["turn_order"]):
+        if current_index >= len(turn_order):
+            print(f"❌ Index {current_index} out of bounds for turn_order length {len(turn_order)}")
             return None
             
-        current_player_id = room["turn_order"][current_index]
+        current_player_id = turn_order[current_index]
+        print(f"🔍 Looking for player {current_player_id} at index {current_index}")
         
         for player in room["players"]:
             if player.id == current_player_id and player.is_active:
+                print(f"✅ Found current player: {player.name}")
                 return {
                     "id": player.id,
                     "name": player.name
                 }
+        
+        print(f"❌ Player {current_player_id} not found or inactive")
+        print(f"   Active players: {[p.name for p in room['players'] if p.is_active]}")
         return None
 
     def is_player_host(self, game_id: str, sid: str) -> bool:
@@ -246,18 +503,41 @@ class GameManager:
     def advance_turn(self, game_id: str):
         """Advance to the next player's turn."""
         room = self.rooms.get(game_id)
-        if not room or not room.get("turn_order"):
+        if not room:
             return
         
         active_players = [p for p in room["players"] if p.is_active]
-        room["turn_order"] = [p.id for p in active_players]
         
-        if len(room["turn_order"]) <= 1:
+        if len(active_players) <= 1:
+            room["turn_order"] = [p.id for p in active_players] if active_players else []
+            room["current_player_index"] = 0
+            print(f"⚠️ Not enough active players for turn advancement: {len(active_players)}")
             return
         
-        current_index = room.get("current_player_index", 0)
-        current_index = (current_index + 1) % len(room["turn_order"])
-        room["current_player_index"] = current_index
+        old_turn_order = room.get("turn_order", [])
+        old_index = room.get("current_player_index", 0)
+        
+        print(f"🔄 Advance turn - Active players: {[p.name for p in active_players]}")
+        print(f"   Old turn order: {old_turn_order}, old index: {old_index}")
+        
+        room["turn_order"] = [p.id for p in active_players]
+        
+        if old_turn_order and old_index < len(old_turn_order):
+            current_player_id = old_turn_order[old_index]
+            print(f"   Looking for old current player: {current_player_id}")
+            
+            try:
+                new_index = room["turn_order"].index(current_player_id)
+                room["current_player_index"] = (new_index + 1) % len(room["turn_order"])
+                print(f"   Found at {new_index}, advancing to {room['current_player_index']}")
+            except ValueError:
+                room["current_player_index"] = 0
+                print(f"   Old player not found, resetting to 0")
+        else:
+            room["current_player_index"] = 0
+            print(f"   No valid old state, starting at 0")
+        
+        print(f"   New turn order: {room['turn_order']}, new index: {room['current_player_index']}")
 
     async def handle_word_submission(self, game_id: str, sid: str, word: str):
         room = self.rooms.get(game_id)
@@ -413,6 +693,9 @@ class GameManager:
             "players": self.get_players_info(game_id),
             "turn_order": [{"id": p_id, "name": next((p.name for p in room["players"] if p.id == p_id), "Unknown")} for p_id in room["turn_order"]]
         })
+        
+        await self._start_turn_timer(game_id)
+        
         return True, "Game started successfully"
 
     async def handle_word_submission(self, game_id: str, sid: str, word: str):
@@ -454,6 +737,7 @@ class GameManager:
                 "reason": "Word not found in dictionary",
                 "word": word
             }, to=sid)
+            await self._apply_time_penalty(game_id)
             return
         
         if word.lower() in room["used_words"]:
@@ -462,9 +746,8 @@ class GameManager:
                 "reason": "Word already used in this game",
                 "word": word
             }, to=sid)
+            await self._apply_time_penalty(game_id)
             return
-        
-        # Get the expected letter (this preserves the letter in chaotic mode)
         expected_letter = self.get_expected_letter(room).lower()
         
         if word.lower()[0] != expected_letter:
@@ -473,16 +756,16 @@ class GameManager:
                 "reason": f"Word must start with '{expected_letter.upper()}'",
                 "word": word
             }, to=sid)
+            await self._apply_time_penalty(game_id)
             return
         
-        # Word accepted - update game state
         room["current_word"] = word.lower()
         room["used_words"].append(word.lower())
-        
-        # Calculate the new letter for the next player (only after successful word)
         next_letter_info = self.get_next_letter_info(room, word.lower())
         
+        await self._stop_turn_timer(game_id)
         self.advance_turn(game_id)
+        
         await self.broadcast_to_room(game_id, {
             "type": "word_submitted",
             "player": player.name,
@@ -493,6 +776,8 @@ class GameManager:
             "current_player": self.get_current_player_info(game_id),
             "players": self.get_players_info(game_id)
         })
+        
+        await self._start_turn_timer(game_id)
 
     async def change_room_difficulty(self, game_id: str, difficulty: str, requesting_player_sid: str):
         """Change room difficulty - only when game is not in progress."""

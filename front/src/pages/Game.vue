@@ -232,6 +232,24 @@ function handlePaste(event: ClipboardEvent) {
           <span v-if="gameStore.isMyTurn" class="my-turn">🎯 É sua vez de jogar!</span>
           <span v-else class="other-turn">⏳ Vez de: <span class="current-player-name" :title="gameStore.currentPlayer.name">{{ gameStore.currentPlayer.name }}</span></span>
         </div>
+        
+        <!-- Timer Display -->
+        <div v-if="gameStore.gameStarted && gameStore.timerActive" class="timer-container">
+          <div class="timer-display" :class="{ 
+            'timer-warning': gameStore.remainingTime <= 10 && gameStore.remainingTime > 5,
+            'timer-critical': gameStore.remainingTime <= 5 
+          }">
+            <div class="timer-icon">⏱️</div>
+            <div class="timer-text">{{ gameStore.remainingTime }}s</div>
+          </div>
+          <div class="timer-bar-container">
+            <div class="timer-bar" :style="{ 
+              width: `${(gameStore.remainingTime / 30) * 100}%`,
+              backgroundColor: gameStore.remainingTime <= 5 ? '#ff4757' : 
+                             gameStore.remainingTime <= 10 ? '#ffa502' : '#2ed573'
+            }"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Controles do Jogo (apenas para o host) -->
@@ -267,8 +285,20 @@ function handlePaste(event: ClipboardEvent) {
         </p>
       </div>
 
+      <!-- Victory State -->
+      <div v-if="gameStore.isVictoryState" class="victory-overlay">
+        <div class="victory-content">
+          <h2 class="victory-title">🏆 VITÓRIA! 🏆</h2>
+          <div class="winner-display">
+            <div class="winner-name">{{ gameStore.winner }}</div>
+          </div>
+          <div class="victory-message">Parabéns! Você é o último jogador restante!</div>
+          <div class="auto-reset-message">O jogo será reiniciado automaticamente em alguns segundos...</div>
+        </div>
+      </div>
+
       <!-- Estado do Jogo Ativo -->
-      <div v-if="gameStore.gameStarted" class="game-active">
+      <div v-if="gameStore.gameStarted && !gameStore.isVictoryState" class="game-active">
         <div class="game-status">
           <h3>🎮 Jogo em Andamento</h3>
           <div class="difficulty-badge" :class="gameStore.difficulty">
@@ -711,6 +741,146 @@ function handlePaste(event: ClipboardEvent) {
   padding: 0.5rem;
   background-color: #F5F5F5;
   border-radius: 0.3rem;
+}
+
+/* Timer Styles */
+.timer-container {
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.timer-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  border-radius: 0.5rem;
+  background-color: #E8F8F5;
+  border: 2px solid #2ed573;
+  transition: all 0.3s ease;
+  margin-bottom: 0.5rem;
+}
+
+.timer-display.timer-warning {
+  background-color: #FFF3E0;
+  border-color: #ffa502;
+  animation: pulse-warning 1s infinite;
+}
+
+.timer-display.timer-critical {
+  background-color: #FFEBEE;
+  border-color: #ff4757;
+  animation: pulse-critical 0.5s infinite;
+}
+
+.timer-icon {
+  font-size: 1.5rem;
+}
+
+.timer-text {
+  font-size: 1.8rem;
+  font-weight: bold;
+  color: #2d3436;
+}
+
+.timer-bar-container {
+  width: 100%;
+  height: 8px;
+  background-color: #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.timer-bar {
+  height: 100%;
+  transition: width 1s linear, background-color 0.3s ease;
+  border-radius: 4px;
+}
+
+@keyframes pulse-warning {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes pulse-critical {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
+}
+
+/* Victory Overlay Styles */
+.victory-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.5s ease;
+}
+
+.victory-content {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 3rem;
+  border-radius: 1rem;
+  text-align: center;
+  color: white;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  animation: slideIn 0.5s ease;
+}
+
+.victory-title {
+  font-size: 3rem;
+  margin-bottom: 1.5rem;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+  animation: bounce 1s infinite;
+}
+
+.winner-display {
+  margin: 1.5rem 0;
+}
+
+.winner-name {
+  font-size: 2rem;
+  font-weight: bold;
+  background: linear-gradient(45deg, #ffd700, #ffed4e);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.victory-message {
+  font-size: 1.2rem;
+  margin: 1rem 0;
+  opacity: 0.9;
+}
+
+.auto-reset-message {
+  font-size: 1rem;
+  opacity: 0.7;
+  font-style: italic;
+  margin-top: 1.5rem;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-50px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes bounce {
+  0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-10px); }
+  60% { transform: translateY(-5px); }
 }
 
 .host-only-message {
