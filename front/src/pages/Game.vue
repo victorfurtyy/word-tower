@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/gameStore'
 
@@ -15,6 +15,8 @@ const playerName = ref(localStorage.getItem('pendingPlayerName') || '')
 const inputWord = ref('')
 const selectedDifficulty = ref('normal')
 const showNameInput = ref(!playerName.value) // Só mostra se não tem nome salvo
+const messagesContainer = ref<HTMLElement | null>(null)
+const wordInput = ref<HTMLInputElement | null>(null)
 
 // Computed properties
 const canSubmitWord = computed(() => 
@@ -60,6 +62,15 @@ function clearError() {
   gameStore.clearError()
 }
 
+// Auto-dismiss do erro após 5 segundos
+watch(() => gameStore.lastError, (newError) => {
+  if (newError) {
+    setTimeout(() => {
+      gameStore.clearError()
+    }, 5000) // 5 segundos
+  }
+})
+
 // Lifecycle
 onMounted(() => {
   // Limpar estado ao montar
@@ -92,6 +103,38 @@ function highlightNextLetter(word: string, index: number): string {
     i === index ? `<mark style="background: #FFB107; color: #8A480F; padding: 2px 4px; border-radius: 3px; font-weight: bold;">${char}</mark>` : char
   ).join('')
 }
+
+// Função para fazer scroll para o final das mensagens
+function scrollToBottom() {
+  if (messagesContainer.value) {
+    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  }
+}
+
+// Watch para fazer scroll quando as mensagens mudarem
+watch(() => gameStore.messages, () => {
+  nextTick(() => {
+    scrollToBottom()
+  })
+}, { deep: true })
+
+// Watch para dar foco no input quando for minha vez
+watch(() => gameStore.isMyTurn, (isMyTurn) => {
+  if (isMyTurn && gameStore.gameStarted && wordInput.value) {
+    nextTick(() => {
+      wordInput.value?.focus()
+    })
+  }
+})
+
+// Watch para dar foco quando o jogo começar se já for minha vez
+watch(() => gameStore.gameStarted, (gameStarted) => {
+  if (gameStarted && gameStore.isMyTurn && wordInput.value) {
+    nextTick(() => {
+      wordInput.value?.focus()
+    })
+  }
+})
 </script>
 
 <template>
@@ -222,6 +265,7 @@ function highlightNextLetter(word: string, index: number): string {
         <!-- Input para nova palavra -->
         <div class="word-input-container">
           <input 
+            ref="wordInput"
             v-model="inputWord" 
             type="text" 
             placeholder="Digite sua palavra aqui..."
@@ -243,7 +287,7 @@ function highlightNextLetter(word: string, index: number): string {
       <!-- Chat de Mensagens -->
       <div class="messages-section">
         <h3>💬 Mensagens do Jogo</h3>
-        <div class="messages-container">
+        <div ref="messagesContainer" class="messages-container">
           <div 
             v-for="message in gameStore.messages" 
             :key="message.id" 
@@ -369,11 +413,18 @@ function highlightNextLetter(word: string, index: number): string {
   font-family: 'Tomo Bossa Black', Arial, sans-serif;
   box-shadow: 0 0.3rem 0 0 #96550B;
   transition: all 0.1s;
-}
 
-.btn-connect:hover:not(:disabled) {
-  transform: translateY(0.1rem);
-  box-shadow: 0 0.2rem 0 0 #96550B;
+  &:hover:not(:disabled) {
+    background-color: color-mix(in srgb, #FFB107, white 20%);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 0 0 #96550B;
+  }
+
+  &:active:not(:disabled) {
+    background-color: color-mix(in srgb, #FFB107, black 10%);
+    transform: translateY(8px);
+    box-shadow: 0 0 0 0 #96550B;
+  }
 }
 
 .btn-connect:disabled {
@@ -437,11 +488,19 @@ function highlightNextLetter(word: string, index: number): string {
   cursor: pointer;
   font-family: 'Tomo Bossa Black', Arial, sans-serif;
   box-shadow: 0 0.2rem 0 0 #B71C1C;
-}
+  transition: all 0.1s;
 
-.btn-back:hover {
-  transform: translateY(0.1rem);
-  box-shadow: 0 0.1rem 0 0 #B71C1C;
+  &:hover {
+    background-color: color-mix(in srgb, #D32F2F, white 20%);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 0 0 #B71C1C;
+  }
+
+  &:active {
+    background-color: color-mix(in srgb, #D32F2F, black 10%);
+    transform: translateY(8px);
+    box-shadow: 0 0 0 0 #B71C1C;
+  }
 }
 
 /* Seções do jogo */
@@ -627,11 +686,19 @@ function highlightNextLetter(word: string, index: number): string {
   font-family: 'Tomo Bossa Black', Arial, sans-serif;
   box-shadow: 0 0.3rem 0 0 #2E7D32;
   margin-top: 1rem;
-}
+  transition: all 0.1s;
 
-.btn-start:hover:not(:disabled) {
-  transform: translateY(0.1rem);
-  box-shadow: 0 0.2rem 0 0 #2E7D32;
+  &:hover:not(:disabled) {
+    background-color: color-mix(in srgb, #4CAF50, white 20%);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 0 0 #2E7D32;
+  }
+
+  &:active:not(:disabled) {
+    background-color: color-mix(in srgb, #4CAF50, black 10%);
+    transform: translateY(8px);
+    box-shadow: 0 0 0 0 #2E7D32;
+  }
 }
 
 .btn-start:disabled {
@@ -721,11 +788,19 @@ function highlightNextLetter(word: string, index: number): string {
   cursor: pointer;
   font-family: 'Tomo Bossa Black', Arial, sans-serif;
   box-shadow: 0 0.2rem 0 0 #1976D2;
-}
+  transition: all 0.1s;
 
-.btn-submit:hover:not(:disabled) {
-  transform: translateY(0.1rem);
-  box-shadow: 0 0.1rem 0 0 #1976D2;
+  &:hover:not(:disabled) {
+    background-color: color-mix(in srgb, #2196F3, white 20%);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 0 0 #1976D2;
+  }
+
+  &:active:not(:disabled) {
+    background-color: color-mix(in srgb, #2196F3, black 10%);
+    transform: translateY(8px);
+    box-shadow: 0 0 0 0 #1976D2;
+  }
 }
 
 .btn-submit:disabled {
@@ -740,22 +815,57 @@ function highlightNextLetter(word: string, index: number): string {
   border: 0.15rem solid #96550B;
   border-radius: 0.3rem;
   padding: 1rem;
+  
+  /* Custom scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: #96550B #FAD280;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #FAD280;
+    border-radius: 0.2rem;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #96550B;
+    border-radius: 0.2rem;
+    border: 1px solid #FAD280;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: #8A480F;
+  }
+
+  &::-webkit-scrollbar-thumb:active {
+    background: #502405;
+  }
 }
 
 .message {
   margin-bottom: 0.8rem;
   padding: 0.5rem;
   border-radius: 0.3rem;
+  max-width: 80%;
 }
 
 .message.system-message {
   background-color: #E0E0E0;
   font-style: italic;
+  margin: 0 auto 0.8rem auto;
+  text-align: center;
+  max-width: 90%;
 }
 
 .message.my-message {
   background-color: #E3F2FD;
-  border-left: 0.3rem solid #2196F3;
+  border-left: none;
+  border-right: 0.3rem solid #2196F3;
+  margin-left: auto;
+  margin-right: 0;
+  text-align: right;
 }
 
 .message-header {
@@ -764,6 +874,11 @@ function highlightNextLetter(word: string, index: number): string {
   font-size: 0.8rem;
   margin-bottom: 0.3rem;
   opacity: 0.8;
+}
+
+.message.my-message .message-header {
+  flex-direction: row-reverse;
+  gap: 0.5rem;
 }
 
 .message-sender {
@@ -775,29 +890,109 @@ function highlightNextLetter(word: string, index: number): string {
 }
 
 .error-message {
+  position: fixed;
+  top: 20px;
+  right: 20px;
   background-color: #FFEBEE;
   color: #D32F2F;
   border: 0.15rem solid #D32F2F;
-  padding: 1rem;
-  border-radius: 0.3rem;
-  margin-bottom: 1rem;
+  padding: 1rem 1.5rem;
+  border-radius: 0.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(211, 47, 47, 0.3);
+  max-width: 400px;
+  min-width: 300px;
+  font-family: 'Tomo Bossa Black', Arial, sans-serif;
+  font-weight: bold;
+  
+  /* Animação de entrada */
+  animation: slideInFromRight 0.3s ease-out;
+}
+
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Animação de saída */
+.error-message.fade-out {
+  animation: slideOutToRight 0.3s ease-in forwards;
+}
+
+@keyframes slideOutToRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
 }
 
 .btn-clear {
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: 0.2rem 0.5rem;
+  padding: 0.3rem 0.6rem;
   color: #D32F2F;
   font-weight: bold;
+  border-radius: 50%;
+  transition: all 0.1s;
+  font-size: 1.2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin-left: 1rem;
+
+  &:hover {
+    background-color: color-mix(in srgb, #D32F2F, white 85%);
+    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(211, 47, 47, 0.3);
+  }
+
+  &:active {
+    background-color: color-mix(in srgb, #D32F2F, white 75%);
+    transform: scale(0.95);
+    box-shadow: 0 1px 4px rgba(211, 47, 47, 0.3);
+  }
 }
 
-.btn-clear:hover {
-  background-color: rgba(211, 47, 47, 0.1);
-  border-radius: 0.2rem;
+/* Custom scrollbar global para elementos que podem ter overflow */
+.game-interface {
+  scrollbar-width: thin;
+  scrollbar-color: #8A480F #C7721E;
+}
+
+.game-interface::-webkit-scrollbar {
+  width: 10px;
+}
+
+.game-interface::-webkit-scrollbar-track {
+  background: #C7721E;
+  border-radius: 0.3rem;
+}
+
+.game-interface::-webkit-scrollbar-thumb {
+  background: #8A480F;
+  border-radius: 0.3rem;
+  border: 1px solid #C7721E;
+}
+
+.game-interface::-webkit-scrollbar-thumb:hover {
+  background: #502405;
 }
 
 /* Responsividade */
@@ -822,6 +1017,37 @@ function highlightNextLetter(word: string, index: number): string {
   
   .game-logo {
     width: 15rem;
+  }
+
+  .error-message {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    max-width: none;
+    min-width: auto;
+    margin: 0;
+  }
+
+  @keyframes slideInFromRight {
+    from {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideOutToRight {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
   }
 }
 </style>

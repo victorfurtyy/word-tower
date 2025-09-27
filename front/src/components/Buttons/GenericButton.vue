@@ -39,6 +39,12 @@ defineProps<{
   width: 100%;
 
   &:hover {
+    background-color: color-mix(in srgb, v-bind('backgroundColor'), white 20%);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 0 0 v-bind('borderColor');
+  }
+  &:active {
+    background-color: color-mix(in srgb, v-bind('backgroundColor'), black 10%);
     transform: translateY(8px);
     box-shadow: 0 0 0 0 v-bind('borderColor');
   }

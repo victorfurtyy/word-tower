@@ -193,6 +193,23 @@ export const useGameStore = defineStore('game', () => {
         addMessage('Sistema', `🏆 Jogo terminou! Vencedor: ${data.winner}`)
         break
 
+      case 'game_ended':
+        gameStarted.value = false
+        currentWord.value = ''
+        nextLetter.value = ''
+        nextLetterIndex.value = 0
+        currentPlayer.value = null
+        players.value = data.players || []
+        // Atualiza o host
+        if (players.value.length > 0) {
+          const host = players.value.find(p => p.is_host)
+          if (host) {
+            hostId.value = host.id
+          }
+        }
+        addMessage('Sistema', `⏸️ ${data.reason || 'Jogo encerrado'}`)
+        break
+
       case 'error':
         lastError.value = data.message || 'Erro desconhecido'
         addMessage('Erro', data.message || 'Erro desconhecido')
