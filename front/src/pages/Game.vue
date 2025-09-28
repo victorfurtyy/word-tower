@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '@/stores/gameStore'
+import GenericModal from '@/components/Modal/GenericModal.vue'
+import GenericSlider from '@/components/Slider/GenericSlider.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +19,13 @@ const selectedDifficulty = ref('normal')
 const showNameInput = ref(!playerName.value) // Só mostra se não tem nome salvo
 const messagesContainer = ref<HTMLElement | null>(null)
 const wordInput = ref<HTMLInputElement | null>(null)
+const showGameSettings = ref(false)
+
+// Configurações do jogo (para o modal)
+const gameTimeIndex = ref(3) // padrão 30s (índice 3 no array timeOptions)
+const timeOptions = ['10s', '15s', '20s', '30s', '45s', '60s']
+const difficultyIndex = ref(1) // padrão normal
+const difficultyOptions = ['Fácil', 'Normal', 'Difícil']
 
 // Computed properties
 const canSubmitWord = computed(() => 
@@ -55,6 +64,61 @@ function changeDifficulty() {
 function backToLobby() {
   gameStore.leaveGame()
   router.push('/')
+}
+
+// Função para abrir configurações no jogo
+function openGameSettings() {
+  // Sincronizar com as configurações atuais da sala
+  if (gameStore.roomSettings.defaultTime === 10) gameTimeIndex.value = 0
+  else if (gameStore.roomSettings.defaultTime === 15) gameTimeIndex.value = 1
+  else if (gameStore.roomSettings.defaultTime === 20) gameTimeIndex.value = 2
+  else if (gameStore.roomSettings.defaultTime === 30) gameTimeIndex.value = 3
+  else if (gameStore.roomSettings.defaultTime === 45) gameTimeIndex.value = 4
+  else if (gameStore.roomSettings.defaultTime === 60) gameTimeIndex.value = 5
+
+  if (gameStore.roomSettings.difficulty === 'fácil') difficultyIndex.value = 0
+  else if (gameStore.roomSettings.difficulty === 'normal') difficultyIndex.value = 1
+  else if (gameStore.roomSettings.difficulty === 'difícil') difficultyIndex.value = 2
+
+  showGameSettings.value = true
+}
+
+// Função para salvar configurações do jogo
+function saveGameSettings() {
+  const selectedTimeString = timeOptions[gameTimeIndex.value]
+  const selectedTime = parseInt(selectedTimeString.replace('s', ''))
+  const selectedDifficulty = difficultyOptions[difficultyIndex.value].toLowerCase()
+  
+  console.log('🔧 Salvando configurações:', {
+    gameTimeIndex: gameTimeIndex.value,
+    selectedTimeString,
+    selectedTime,
+    difficultyIndex: difficultyIndex.value,
+    selectedDifficulty,
+    currentSettings: gameStore.roomSettings
+  })
+  
+  // Mostrar feedback visual das alterações
+  const timeChanged = gameStore.roomSettings.defaultTime !== selectedTime
+  const difficultyChanged = gameStore.roomSettings.difficulty !== selectedDifficulty
+  
+  if (timeChanged || difficultyChanged) {
+    console.log('📝 Enviando alterações:', { defaultTime: selectedTime, difficulty: selectedDifficulty })
+    
+    gameStore.updateRoomSettings({
+      defaultTime: selectedTime,
+      difficulty: selectedDifficulty
+    })
+    
+    // Se o jogo está em andamento, avisar que as configurações serão aplicadas no próximo turno
+    if (gameStore.gameStarted) {
+      gameStore.addMessage('Sistema', '⚙️ Configurações serão aplicadas no próximo turno')
+    }
+  } else {
+    console.log('ℹ️ Nenhuma alteração detectada')
+  }
+  
+  showGameSettings.value = false
 }
 
 // Limpar erro
@@ -196,16 +260,19 @@ function handlePaste(event: ClipboardEvent) {
 
     <!-- Interface do Jogo -->
     <div v-else class="game-interface">
-      <!-- Header com logo pequena e controles -->
+      <!-- Header mais clean -->
       <div class="game-header">
-        <img src="@/assets/images/logo/logo.png" class="small-logo" alt="Word Tower" draggable="false" />
-        <div class="header-info">
-          <span class="room-name">🏠 {{ gameId }}</span>
-          <span :class="['connection-status', gameStore.isConnected ? 'connected' : 'disconnected']">
-            {{ gameStore.isConnected ? '🟢 Conectado' : '🔴 Desconectado' }}
-          </span>
+        <div class="header-left">
+          <img src="@/assets/images/logo/logo.png" class="small-logo" alt="Word Tower" draggable="false" />
+          <span class="room-name">{{ gameId }}</span>
         </div>
-        <button @click="backToLobby" class="btn-back">Voltar</button>
+        <div class="header-right">
+          <!-- Botão de configurações (apenas para host) -->
+          <button v-if="gameStore.amIHost" @click="openGameSettings" class="btn-settings">
+            ⚙️
+          </button>
+          <button @click="backToLobby" class="btn-back">Sair</button>
+        </div>
       </div>
 
       <!-- Erro -->
@@ -214,75 +281,73 @@ function handlePaste(event: ClipboardEvent) {
         <button @click="clearError" class="btn-clear">✕</button>
       </div>
 
-      <!-- Jogadores -->
-      <div class="players-section">
-        <h3>👥 Jogadores na Sala ({{ gameStore.players.length }})</h3>
-        <div class="players-grid">
-          <div v-for="player in gameStore.players" :key="player.id" class="player-card">
-            <span class="player-name" :title="player.name">{{ player.name }}</span>
-            <span v-if="player.id === gameStore.myPlayerId" class="you-badge">Você</span>
-            <span v-if="player.is_host" class="host-badge">👑 Host</span>
-            <span v-if="gameStore.currentPlayer && player.id === gameStore.currentPlayer.id" class="turn-badge">Sua vez!</span>
-            <span v-if="!player.is_active" class="eliminated-badge">Eliminado</span>
+      <!-- Modal de Configurações do Jogo (apenas para host) -->
+      <GenericModal v-model:open="showGameSettings" title="Configurações da Sala" background-color="#C7721E" border-color="#8A480F">
+        <div class="settings-content">
+          <div class="setting-time">
+            <p>Tempo de Turno</p>
+            <GenericSlider v-model="gameTimeIndex" :values="timeOptions" />
+          </div>
+          <div class="setting-difficulty">
+            <p>Dificuldade</p>
+            <GenericSlider v-model="difficultyIndex" :values="difficultyOptions" />
+          </div>
+          <div class="settings-actions">
+            <button @click="saveGameSettings" class="btn-save-settings">Salvar</button>
           </div>
         </div>
-        
-        <!-- Indicador de turno -->
-        <div v-if="gameStore.gameStarted && gameStore.currentPlayer" class="turn-indicator">
-          <span v-if="gameStore.isMyTurn" class="my-turn">🎯 É sua vez de jogar!</span>
-          <span v-else class="other-turn">⏳ Vez de: <span class="current-player-name" :title="gameStore.currentPlayer.name">{{ gameStore.currentPlayer.name }}</span></span>
-        </div>
-        
-        <!-- Timer Display -->
-        <div v-if="gameStore.gameStarted && gameStore.timerActive" class="timer-container">
-          <div class="timer-display" :class="{ 
-            'timer-warning': gameStore.remainingTime <= 10 && gameStore.remainingTime > 5,
-            'timer-critical': gameStore.remainingTime <= 5 
-          }">
-            <div class="timer-icon">⏱️</div>
-            <div class="timer-text">{{ gameStore.remainingTime }}s</div>
-          </div>
-          <div class="timer-bar-container">
-            <div class="timer-bar" :style="{ 
-              width: `${(gameStore.remainingTime / 30) * 100}%`,
-              backgroundColor: gameStore.remainingTime <= 5 ? '#ff4757' : 
-                             gameStore.remainingTime <= 10 ? '#ffa502' : '#2ed573'
-            }"></div>
-          </div>
-        </div>
-      </div>
+      </GenericModal>
 
-      <!-- Controles do Jogo (apenas para o host) -->
-      <div v-if="gameStore.amIHost" class="game-controls">
-        <div class="controls-header">
-          <h3>⚙️ Configurações (Host)</h3>
+      <!-- Interface principal mais clean -->
+      <div class="main-game-area">
+        <!-- Info da sala e jogadores (mais compacta) -->
+        <div class="game-info">
+          <div class="players-compact">
+            <span class="players-count">👥 {{ gameStore.players.length }} jogadores</span>
+            <div class="players-list">
+              <span v-for="player in gameStore.players" :key="player.id" 
+                    class="player-tag" 
+                    :class="{ 
+                      'current-player': gameStore.currentPlayer && player.id === gameStore.currentPlayer.id,
+                      'eliminated': !player.is_active,
+                      'is-host': player.is_host,
+                      'is-me': player.id === gameStore.myPlayerId
+                    }">
+                {{ player.name }}
+                <span v-if="player.is_host">👑</span>
+              </span>
+            </div>
+          </div>
+          
+          <!-- Timer mais limpo -->
+          <div v-if="gameStore.gameStarted && gameStore.timerActive" class="timer-clean">
+            <div class="timer-circle" :class="{ 
+              'timer-warning': gameStore.remainingTime <= 10 && gameStore.remainingTime > 5,
+              'timer-critical': gameStore.remainingTime <= 5 
+            }">
+              {{ gameStore.remainingTime }}s
+            </div>
+            <div v-if="gameStore.currentPlayer" class="current-turn">
+              {{ gameStore.isMyTurn ? 'Sua vez!' : `Vez de ${gameStore.currentPlayer.name}` }}
+            </div>
+          </div>
         </div>
-        
-        <div class="control-row">
-          <label>Dificuldade:</label>
-          <select v-model="selectedDifficulty" @change="changeDifficulty" class="difficulty-select">
-            <option value="easy">🟢 Fácil (sem acentos)</option>
-            <option value="normal">🟡 Normal (com acentos)</option>
-            <option value="caotic">🔴 Caótico (letra aleatória)</option>
-          </select>
-        </div>
-        
-        <button 
-          v-if="!gameStore.gameStarted"
-          @click="startGame" 
-          :disabled="!gameStore.isConnected || gameStore.players.length < 1"
-          class="btn-start"
-        >
-          🚀 Iniciar Jogo
-        </button>
-      </div>
 
-      <!-- Mensagem para não-hosts -->
-      <div v-else-if="!gameStore.gameStarted" class="host-only-message">
-        <p>🔒 Apenas o host (criador da sala) pode configurar e iniciar o jogo.</p>
-        <p v-if="gameStore.players.find((p: any) => p.is_host)">
-          Host atual: <strong class="host-name" :title="gameStore.players.find((p: any) => p.is_host)?.name">{{ gameStore.players.find((p: any) => p.is_host)?.name }}</strong>
-        </p>
+        <!-- Controles do jogo (mais simples) -->
+        <div v-if="!gameStore.gameStarted" class="game-start-area">
+          <div v-if="gameStore.amIHost" class="host-controls">
+            <button @click="startGame" :disabled="!gameStore.isConnected || gameStore.players.length < 1" class="btn-start-clean">
+              🚀 Iniciar Jogo
+            </button>
+            <p class="start-hint">Configure a sala usando o botão ⚙️ no canto superior direito</p>
+          </div>
+          <div v-else class="waiting-host">
+            <p>⏳ Aguardando o host iniciar o jogo...</p>
+            <p v-if="gameStore.players.find((p: any) => p.is_host)" class="host-info">
+              Host: <strong>{{ gameStore.players.find((p: any) => p.is_host)?.name }}</strong>
+            </p>
+          </div>
+        </div>
       </div>
 
       <!-- Victory State -->
@@ -297,74 +362,64 @@ function handlePaste(event: ClipboardEvent) {
         </div>
       </div>
 
-      <!-- Estado do Jogo Ativo -->
-      <div v-if="gameStore.gameStarted && !gameStore.isVictoryState" class="game-active">
-        <div class="game-status">
-          <h3>🎮 Jogo em Andamento</h3>
-          <div class="difficulty-badge" :class="gameStore.difficulty">
-            Modo: {{ 
-              gameStore.difficulty === 'easy' ? '🟢 Fácil' : 
-              gameStore.difficulty === 'normal' ? '🟡 Normal' : 
-              '🔴 Caótico' 
-            }}
+      <!-- Estado do Jogo Ativo (mais clean) -->
+      <div v-if="gameStore.gameStarted && !gameStore.isVictoryState" class="game-play-area">
+        <!-- Palavra atual e próxima letra em um card -->
+        <div class="word-card">
+          <div class="current-word-section">
+            <span class="word-label">Palavra atual:</span>
+            <div class="current-word" v-html="highlightNextLetter(gameStore.currentWord, gameStore.nextLetterIndex)"></div>
+          </div>
+          <div class="next-letter-section">
+            <span class="next-label">Próxima deve começar com:</span>
+            <div class="next-letter">{{ gameStore.nextLetter.toUpperCase() }}</div>
           </div>
         </div>
 
-        <div class="word-display-container">
-          <h4>📝 Palavra Atual:</h4>
-          <div 
-            class="current-word-display" 
-            v-html="highlightNextLetter(gameStore.currentWord, gameStore.nextLetterIndex)"
-          ></div>
-        </div>
-
-        <div class="next-letter-container">
-          <h4>🎯 Próxima palavra deve começar com:</h4>
-          <div class="next-letter-badge">{{ gameStore.nextLetter.toUpperCase() }}</div>
-        </div>
-
-        <!-- Input para nova palavra -->
-        <div class="word-input-container">
-          <input 
-            ref="wordInput"
-            v-model="inputWord" 
-            type="text" 
-            placeholder="Digite sua palavra aqui..."
-            @keydown="filterLettersOnly"
-            @paste="handlePaste"
-            @keyup.enter="submitWord"
-            :disabled="!gameStore.isConnected || !gameStore.isMyTurn"
-            class="word-input"
-          />
-          <button @click="submitWord" :disabled="!canSubmitWord || !gameStore.isMyTurn" class="btn-submit">
-            Enviar 📤
-          </button>
+        <!-- Input area mais clean -->
+        <div v-if="gameStore.isMyTurn" class="input-area">
+          <div class="input-group">
+            <input 
+              ref="wordInput"
+              v-model="inputWord" 
+              type="text" 
+              placeholder="Digite sua palavra..."
+              @keydown="filterLettersOnly"
+              @paste="handlePaste"
+              @keyup.enter="submitWord"
+              :disabled="!gameStore.isConnected || !gameStore.isMyTurn"
+              class="word-input-clean"
+            />
+            <button @click="submitWord" :disabled="!canSubmitWord || !gameStore.isMyTurn" class="btn-submit-clean">
+              Enviar
+            </button>
+          </div>
         </div>
         
-        <!-- Aviso quando não é sua vez -->
-        <div v-if="gameStore.gameStarted && !gameStore.isMyTurn" class="not-your-turn">
-          ⏳ Aguarde sua vez para jogar...
+        <!-- Mensagem de aguardo mais destacada -->
+        <div v-if="!gameStore.isMyTurn" class="waiting-turn-highlight">
+          <div class="waiting-icon">⏳</div>
+          <div class="waiting-text">
+            <h3>Aguarde sua vez!</h3>
+            <p v-if="gameStore.currentPlayer">
+              É a vez de <strong>{{ gameStore.currentPlayer.name }}</strong>
+            </p>
+          </div>
         </div>
       </div>
 
-      <!-- Chat de Mensagens -->
-      <div class="messages-section">
-        <h3>💬 Mensagens do Jogo</h3>
-        <div ref="messagesContainer" class="messages-container">
-          <div 
-            v-for="message in gameStore.messages" 
-            :key="message.id" 
-            class="message"
-            :class="{ 
-              'system-message': message.sender === 'Sistema',
-              'my-message': message.sender === gameStore.playerName 
-            }"
-          >
-            <div class="message-header">
-              <span class="message-sender" :title="message.sender">{{ message.sender }}</span>
-              <span class="message-time">{{ message.timestamp }}</span>
+        <!-- Log de ações (mais simples) -->
+        <div class="game-log">
+          <h4>� Histórico</h4>
+          <div ref="messagesContainer" class="log-container">
+            <div v-for="message in gameStore.messages.slice(-10)" :key="message.id" 
+                 class="log-entry" :class="{ 'system': message.sender === 'Sistema' }">
+              <span class="log-time">{{ message.timestamp.split(' ')[1] }}</span>
+              <span class="log-content">
+                <strong v-if="message.sender !== 'Sistema'">{{ message.sender }}:</strong>
+                {{ message.content }}
+              </span>
             </div>
-            <div class="message-content">{{ message.content }}</div>
           </div>
         </div>
       </div>
@@ -372,7 +427,6 @@ function handlePaste(event: ClipboardEvent) {
 
     <!-- Background -->
     <div class="page-background"></div>
-  </div>
 </template>
 
 <style scoped>
@@ -400,6 +454,425 @@ function handlePaste(event: ClipboardEvent) {
   background-size: cover;
   background-position: 45% 100%;
   z-index: 0;
+}
+
+/* Configurações Modal */
+.settings-content {
+  padding: 1rem;
+  text-align: center;
+  font-family: 'Tomo Bossa Black', Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+  width: 90%;
+}
+
+.setting-time,
+.setting-difficulty {
+  padding: 1rem;
+  background-color: #FAD280;
+  border: 3px solid #96550B;
+  border-radius: 0.5rem;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  color: #502405;
+}
+
+.settings-actions {
+  margin-top: 1rem;
+}
+
+.btn-save-settings {
+  background-color: #FFB107;
+  border: 3px solid #96550B;
+  border-radius: 0.5rem;
+  color: #502405;
+  font-family: 'Tomo Bossa Black', Arial, sans-serif;
+  font-size: 1.1rem;
+  padding: 0.8rem 2rem;
+  cursor: pointer;
+  box-shadow: 0 3px 0 0 #96550B;
+  transition: all 0.1s ease;
+}
+
+.btn-save-settings:hover {
+  transform: translateY(1px);
+  box-shadow: 0 2px 0 0 #96550B;
+}
+
+/* Interface principal mais clean */
+.main-game-area {
+  background-color: rgba(199, 114, 30, 0.9);
+  border: 0.2rem solid #8A480F;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.game-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.players-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.players-count {
+  font-size: 1rem;
+  color: #502405;
+  font-weight: bold;
+}
+
+.players-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.player-tag {
+  background-color: #FAD280;
+  border: 2px solid #96550B;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.3rem;
+  font-size: 0.9rem;
+  color: #502405;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.player-tag.current-player {
+  background-color: #FFB107;
+  border-color: #8A480F;
+  font-weight: bold;
+}
+
+.player-tag.eliminated {
+  background-color: #ccc;
+  border-color: #999;
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.player-tag.is-host {
+  background-color: #F9E79F;
+  border-color: #D4AF37;
+}
+
+.player-tag.is-me {
+  border-width: 3px;
+  font-weight: bold;
+}
+
+.timer-clean {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.timer-circle {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background-color: #2ed573;
+  border: 3px solid #20bf6b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: white;
+  transition: all 0.3s ease;
+}
+
+.timer-circle.timer-warning {
+  background-color: #ffa502;
+  border-color: #ff6348;
+}
+
+.timer-circle.timer-critical {
+  background-color: #ff4757;
+  border-color: #ff3742;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.current-turn {
+  font-size: 0.9rem;
+  color: #502405;
+  text-align: center;
+}
+
+.game-start-area {
+  text-align: center;
+  padding: 2rem;
+}
+
+.host-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.btn-start-clean {
+  background-color: #27ae60;
+  color: white;
+  border: 3px solid #1e8449;
+  padding: 1rem 2rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-family: 'Tomo Bossa Black', Arial, sans-serif;
+  font-size: 1.2rem;
+  box-shadow: 0 3px 0 0 #1e8449;
+  transition: all 0.1s;
+}
+
+.btn-start-clean:hover {
+  transform: translateY(1px);
+  box-shadow: 0 2px 0 0 #1e8449;
+}
+
+.btn-start-clean:disabled {
+  background-color: #95a5a6;
+  border-color: #7f8c8d;
+  cursor: not-allowed;
+}
+
+.start-hint {
+  font-size: 0.9rem;
+  color: #502405;
+  margin: 0;
+}
+
+.waiting-host {
+  color: #502405;
+}
+
+.host-info {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.game-play-area {
+  background-color: rgba(199, 114, 30, 0.9);
+  border: 0.2rem solid #8A480F;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.word-card {
+  background-color: #FAD280;
+  border: 3px solid #96550B;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.current-word-section, .next-letter-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.word-label, .next-label {
+  font-size: 0.9rem;
+  color: #502405;
+  font-weight: bold;
+}
+
+.current-word {
+  font-size: 1.8rem;
+  font-weight: bold;
+  color: #8A480F;
+}
+
+.next-letter {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #8A480F;
+  background-color: #FFB107;
+  padding: 0.3rem 0.8rem;
+  border-radius: 0.3rem;
+  border: 2px solid #96550B;
+}
+
+.input-area {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.input-area.disabled {
+  opacity: 0.6;
+}
+
+.input-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.word-input-clean {
+  flex: 1;
+  padding: 0.8rem;
+  border: 3px solid #96550B;
+  border-radius: 0.3rem;
+  font-size: 1.1rem;
+  font-family: 'Tomo Bossa Black', Arial, sans-serif;
+  background-color: #FEE793;
+  color: #502405;
+}
+
+.word-input-clean:focus {
+  outline: none;
+  border-color: #8A480F;
+  box-shadow: 0 0 0 2px rgba(138, 72, 15, 0.3);
+}
+
+.btn-submit-clean {
+  background-color: #3498db;
+  color: white;
+  border: 3px solid #2980b9;
+  padding: 0.8rem 1.5rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  font-family: 'Tomo Bossa Black', Arial, sans-serif;
+  font-size: 1rem;
+  box-shadow: 0 2px 0 0 #2980b9;
+  transition: all 0.1s;
+}
+
+.btn-submit-clean:hover {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 0 #2980b9;
+}
+
+.btn-submit-clean:disabled {
+  background-color: #95a5a6;
+  border-color: #7f8c8d;
+  cursor: not-allowed;
+}
+
+.waiting-turn-highlight {
+  background-color: #FFB107;
+  border: 3px solid #96550B;
+  border-radius: 0.5rem;
+  padding: 2rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  animation: pulse-waiting 2s infinite;
+}
+
+.waiting-icon {
+  font-size: 3rem;
+  animation: rotate 2s linear infinite;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-waiting {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+.waiting-text h3 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #502405;
+}
+
+.waiting-text p {
+  margin: 0.5rem 0 0 0;
+  font-size: 1.1rem;
+  color: #8A480F;
+}
+
+.waiting-text strong {
+  color: #502405;
+}
+
+.game-log {
+  background-color: rgba(199, 114, 30, 0.9);
+  border: 0.2rem solid #8A480F;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.game-log h4 {
+  margin: 0 0 0.5rem 0;
+  color: #502405;
+  font-size: 1.1rem;
+}
+
+.log-container {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.log-entry {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  padding: 0.3rem;
+  border-radius: 0.2rem;
+  background-color: rgba(250, 210, 128, 0.5);
+}
+
+.log-entry.system {
+  background-color: rgba(255, 177, 7, 0.3);
+  font-style: italic;
+}
+
+.log-time {
+  color: #8A480F;
+  font-size: 0.8rem;
+  min-width: 3rem;
+}
+
+.log-content {
+  color: #502405;
+  flex: 1;
 }
 
 /* Tela de input do nome (similar ao lobby) */
@@ -509,61 +982,74 @@ function handlePaste(event: ClipboardEvent) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: #C7721E;
+  background-color: rgba(199, 114, 30, 0.95);
   border: 0.2rem solid #8A480F;
   border-radius: 0.5rem;
-  padding: 1rem;
-  margin-bottom: 1rem;
-  box-shadow: 0 0.3rem 0 0 #8A480F;
+  padding: 1rem 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
 }
 
 .small-logo {
-  height: 3rem;
-}
-
-.header-info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  color: #502405;
+  height: 2.5rem;
+  width: auto;
 }
 
 .room-name {
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   font-weight: bold;
+  color: #502405;
+  background-color: rgba(250, 210, 128, 0.8);
+  padding: 0.3rem 0.8rem;
+  border-radius: 0.3rem;
+  border: 2px solid #96550B;
 }
 
-.connection-status.connected {
-  color: #2E7D32;
+.btn-settings {
+  background-color: #FFB107;
+  color: #502405;
+  border: 2px solid #96550B;
+  padding: 0.5rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  font-family: 'Tomo Bossa Black', Arial, sans-serif;
+  font-size: 1rem;
+  box-shadow: 0 2px 0 0 #96550B;
+  transition: all 0.1s;
 }
 
-.connection-status.disconnected {
-  color: #D32F2F;
+.btn-settings:hover {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 0 #96550B;
 }
 
 .btn-back {
   background-color: #D32F2F;
   color: white;
-  border: 0.2rem solid #B71C1C;
-  padding: 0.6rem 1.2rem;
+  border: 2px solid #B71C1C;
+  padding: 0.5rem 1rem;
   border-radius: 0.3rem;
   cursor: pointer;
   font-family: 'Tomo Bossa Black', Arial, sans-serif;
-  box-shadow: 0 0.2rem 0 0 #B71C1C;
+  box-shadow: 0 2px 0 0 #B71C1C;
   transition: all 0.1s;
+}
 
-  &:hover {
-    background-color: color-mix(in srgb, #D32F2F, white 20%);
-    transform: translateY(-2px);
-    box-shadow: 0 10px 0 0 #B71C1C;
-  }
-
-  &:active {
-    background-color: color-mix(in srgb, #D32F2F, black 10%);
-    transform: translateY(8px);
-    box-shadow: 0 0 0 0 #B71C1C;
-  }
+.btn-back:hover {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 0 #B71C1C;
 }
 
 /* Seções do jogo */

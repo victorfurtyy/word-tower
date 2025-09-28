@@ -2,16 +2,13 @@
 import GenericButton from '@/components/Buttons/GenericButton.vue';
 import GenericInput from '@/components/Inputs/GenericInput.vue'
 import GenericLabel from '@/components/Labels/GenericLabel.vue'
-import GenericModal from '@/components/Modal/GenericModal.vue'
-import GenericSlider from '@/components/Slider/GenericSlider.vue';
-import { Play, Settings } from 'lucide-vue-next';
+import { Play } from 'lucide-vue-next';
 import { ref } from 'vue';
 import router from '@/router';
 
 const showStartScreen = ref(true)
 const showGameLobby = ref(false)
 const isLogoMoving = ref(false)
-const isSettingsOpen = ref(false)
 
 const startGame = () => {
   const startOverlay = document.querySelector('.start-overlay');
@@ -26,13 +23,6 @@ const startGame = () => {
     }, 600)
   }, 400)
 }
-
-const openSettings = () => {
-  isSettingsOpen.value = true
-}
-
-const gameTimeIndex = ref(0);
-const timeOptions = ['10s', '15s', '20s', '30s'];
 
 const startGameRoom = () => {
   const roomNameInput = document.getElementById('room_name') as HTMLInputElement | null;
@@ -50,6 +40,8 @@ const startGameRoom = () => {
     playerNameInput?.focus();
     return;
   }
+  
+  // As configurações serão definidas pelo host no jogo
   
   // Salvar o nome do jogador no localStorage para usar na próxima tela
   localStorage.setItem('pendingPlayerName', playerName);
@@ -82,25 +74,7 @@ const startGameRoom = () => {
     <img src="@/assets/images/logo/logo.png" class="logo" alt="Word Tower" draggable="false" />
   </div>
 
-  <!-- Botão de configurações -->
-  <div v-if="showGameLobby" class="settings-button">
-    <GenericButton aspect-ratio="1" background-color="#FFB107" border-color="#96550B" @click="openSettings">
-      <Settings color="#96550B" fill="white" :size="20" />
-    </GenericButton>
-  </div>
 
-  <!-- Modal de configurações -->
-  <GenericModal v-model:open="isSettingsOpen" title="Ajustes da Sala" background-color="#C7721E" border-color="#8A480F">
-    <div class="settings-content">
-      <div class="setting-dificulty">
-        <p>Tempo de partida</p>
-        <GenericSlider v-model="gameTimeIndex" :values="timeOptions" />
-      </div>
-      <div class="setting-duration">
-        <p>Dificuldade</p>
-      </div>
-    </div>
-  </GenericModal>
 
   <!-- Lobby do jogo -->
   <div v-if="showGameLobby" class="game-lobby">
@@ -256,9 +230,9 @@ const startGameRoom = () => {
   width: 90%;
 }
 
-.setting-dificulty,
-.setting-duration {
-  padding: 0 1rem;
+.setting-time,
+.setting-difficulty {
+  padding: 1rem;
   background-color: #FAD280;
   border: 3px solid #96550B;
   border-radius: 0.5rem;
@@ -268,6 +242,7 @@ const startGameRoom = () => {
   align-items: center;
   justify-content: center;
   font-size: 1.2rem;
+  color: #502405;
 }
 
 @keyframes slideInFromLeft {

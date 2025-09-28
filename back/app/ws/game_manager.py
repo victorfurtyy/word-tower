@@ -39,7 +39,11 @@ class GameManager:
                 "turn_order": [],
                 "used_words": [],
                 "turn_start_time": None,
-                "remaining_time": TURN_TIME_LIMIT
+                "remaining_time": TURN_TIME_LIMIT,
+                "settings": {
+                    "default_time": TURN_TIME_LIMIT,
+                    "difficulty": "normal"
+                }
             }
         
         is_host = len(self.rooms[game_id]["players"]) == 0
@@ -59,6 +63,9 @@ class GameManager:
         if self.rooms[game_id]["game_state"] == "waiting":
             self.rooms[game_id]["turn_order"] = [p.id for p in self.rooms[game_id]["players"] if p.is_active]
         
+        room_settings = self.rooms[game_id]["settings"]
+        print(f"⚙️ Enviando configurações da sala {game_id}: {room_settings}")
+        
         await self.broadcast_to_room(game_id, {
             "type": "player_joined",
             "player": player_name,
@@ -68,7 +75,8 @@ class GameManager:
             "difficulty": self.rooms[game_id]["difficulty"],
             "game_state": self.rooms[game_id]["game_state"],
             "current_player": self.get_current_player_info(game_id),
-            "is_active": player.is_active
+            "is_active": player.is_active,
+            "room_settings": room_settings  # Enviar configurações da sala
         })
 
     async def disconnect(self, game_id: str, sid: str):
@@ -256,7 +264,11 @@ class GameManager:
         await self._stop_turn_timer(game_id)
         
         room["turn_start_time"] = time.time()
-        room["remaining_time"] = TURN_TIME_LIMIT
+        # Usar o tempo configurado da sala
+        turn_time = room["settings"].get("default_time", TURN_TIME_LIMIT)
+        room["remaining_time"] = turn_time
+        
+        print(f"🕐 Timer iniciado: {turn_time}s para sala {game_id}")
         
         async def countdown():
             try:
@@ -396,7 +408,8 @@ class GameManager:
         room["current_player_index"] = 0
         room["round_number"] = 1
         room["winner"] = None
-        room["remaining_time"] = TURN_TIME_LIMIT
+        # Usar configurações da sala para o tempo
+        room["remaining_time"] = room["settings"].get("default_time", TURN_TIME_LIMIT)
         
         for player in room["players"]:
             player.is_active = True
@@ -431,6 +444,7 @@ class GameManager:
         """Broadcast a message to all players in a room."""
         if game_id not in self.rooms:
             return
+        
         await sio.emit("game_event", message, room=game_id)
 
     def get_players_info(self, game_id: str) -> list:
@@ -592,6 +606,9 @@ class GameManager:
         
         self.advance_turn(game_id)
         
+        # Reiniciar o timer para o próximo jogador com as configurações corretas
+        await self._start_turn_timer(game_id)
+        
         await self.broadcast_to_room(game_id, {
             "type": "word_accepted",
             "player": current_player.name,
@@ -691,7 +708,8 @@ class GameManager:
             "difficulty": room["difficulty"],
             "current_player": self.get_current_player_info(game_id),
             "players": self.get_players_info(game_id),
-            "turn_order": [{"id": p_id, "name": next((p.name for p in room["players"] if p.id == p_id), "Unknown")} for p_id in room["turn_order"]]
+            "turn_order": [{"id": p_id, "name": next((p.name for p in room["players"] if p.id == p_id), "Unknown")} for p_id in room["turn_order"]],
+            "room_settings": room["settings"]  # Enviar configurações da sala
         })
         
         await self._start_turn_timer(game_id)
@@ -731,31 +749,41 @@ class GameManager:
             }, to=sid)
             return
         
+        # Buscar o nome do jogador para incluir na mensagem
+        player_name = "Alguém"
+        for player in room["players"]:
+            if player.websocket == sid:
+                player_name = player.name
+                break
+
         if not verify_word(word.lower(), room["difficulty"]):
-            await sio.emit("game_event", {
+            await self.broadcast_to_room(game_id, {
                 "type": "word_rejected",
                 "reason": "Word not found in dictionary",
-                "word": word
-            }, to=sid)
+                "word": word,
+                "player": player_name
+            })
             await self._apply_time_penalty(game_id)
             return
         
         if word.lower() in room["used_words"]:
-            await sio.emit("game_event", {
+            await self.broadcast_to_room(game_id, {
                 "type": "word_rejected",
                 "reason": "Word already used in this game",
-                "word": word
-            }, to=sid)
+                "word": word,
+                "player": player_name
+            })
             await self._apply_time_penalty(game_id)
             return
         expected_letter = self.get_expected_letter(room).lower()
         
         if word.lower()[0] != expected_letter:
-            await sio.emit("game_event", {
+            await self.broadcast_to_room(game_id, {
                 "type": "word_rejected", 
                 "reason": f"Word must start with '{expected_letter.upper()}'",
-                "word": word
-            }, to=sid)
+                "word": word,
+                "player": player_name
+            })
             await self._apply_time_penalty(game_id)
             return
         
@@ -819,6 +847,64 @@ class GameManager:
         })
         return True, "Difficulty changed successfully"
 
+    async def update_room_settings(self, game_id: str, settings: dict, requesting_player_sid: str):
+        """Update room settings (time and difficulty) - can be changed at any time by host."""
+        room = self.rooms.get(game_id)
+        if not room:
+            return False, "Room not found"
+
+        if not self.is_player_host(game_id, requesting_player_sid):
+            await sio.emit("game_event", {
+                "type": "settings_update_denied", 
+                "reason": "Only the room creator can change settings"
+            }, to=requesting_player_sid)
+            return False, "Only host can change"
+
+        player_in_room = any(player.websocket == requesting_player_sid for player in room["players"])
+        if not player_in_room:
+            await sio.emit("game_event", {
+                "type": "settings_update_denied", 
+                "reason": "You are not in this room"
+            }, to=requesting_player_sid)
+            return False, "Player not in room"
+
+        # Atualizar configurações
+        if "default_time" in settings:
+            new_time = settings["default_time"]
+            old_time = room["settings"].get("default_time", "unknown")
+            room["settings"]["default_time"] = new_time
+            room["remaining_time"] = new_time
+            
+            # Se há um timer ativo, atualizá-lo também
+            if room["game_state"] == "playing" and self.timer_tasks.get(game_id):
+                room["remaining_time"] = new_time
+                print(f"[DEBUG BACKEND] Active timer updated to: {new_time}")
+                await self.broadcast_to_room(game_id, {
+                    "type": "timer_update",
+                    "remaining_time": room["remaining_time"],
+                    "current_player": self.get_current_player_info(game_id)
+                })
+
+        if "difficulty" in settings:
+            difficulty = settings["difficulty"].lower()
+            # Mapear dificuldades do frontend para backend
+            difficulty_map = {
+                "fácil": "easy",
+                "normal": "normal", 
+                "difícil": "caotic"
+            }
+            backend_difficulty = difficulty_map.get(difficulty, "normal")
+            
+            room["settings"]["difficulty"] = difficulty
+            room["difficulty"] = backend_difficulty
+
+        await self.broadcast_to_room(game_id, {
+            "type": "room_settings_updated",
+            "settings": room["settings"],
+            "message": "Room settings updated successfully"
+        })
+        return True, "Settings updated successfully"
+
 
 manager = GameManager()
 
@@ -854,6 +940,21 @@ async def change_difficulty(sid, data):
     game_id = session["game_id"]
     difficulty = data.get("difficulty", "normal")
     success, message = await manager.change_room_difficulty(game_id, difficulty, sid)
+    
+    if not success:
+        await sio.emit("game_event", {
+            "type": "error",
+            "message": message
+        }, to=sid)
+
+@sio.event
+async def update_room_settings(sid, data):
+    """Update room settings (time and difficulty)."""
+    session = await sio.get_session(sid)
+    game_id = session["game_id"]
+    settings = data.get("settings", {})
+    
+    success, message = await manager.update_room_settings(game_id, settings, sid)
     
     if not success:
         await sio.emit("game_event", {

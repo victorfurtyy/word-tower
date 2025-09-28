@@ -34,6 +34,12 @@ export const useGameStore = defineStore('game', () => {
   const myPlayerId = ref<string>('')
   const hostId = ref<string>('')  // ID do host da sala
 
+  // Configurações da sala
+  const roomSettings = ref({
+    defaultTime: 30, // tempo padrão em segundos
+    difficulty: 'normal' // fácil, normal, difícil
+  })
+
   // Timer state
   const remainingTime = ref<number>(0)
   const timerActive = ref<boolean>(false)
@@ -137,6 +143,15 @@ export const useGameStore = defineStore('game', () => {
         if (data.player === playerName.value && data.player_id) {
           myPlayerId.value = data.player_id
         }
+
+        // Atualizar configurações da sala se fornecidas
+        if (data.room_settings) {
+          roomSettings.value.defaultTime = data.room_settings.default_time || 30
+          roomSettings.value.difficulty = data.room_settings.difficulty || 'normal'
+          difficulty.value = data.room_settings.difficulty || 'normal'
+          console.log('⚙️ Configurações da sala atualizadas (player_joined):', roomSettings.value)
+        }
+
         addMessage('Sistema', `${data.player} entrou na sala`)
         break
 
@@ -160,6 +175,15 @@ export const useGameStore = defineStore('game', () => {
         players.value = data.players || []
         currentPlayer.value = data.current_player || null
         updateHostInfo(players.value)
+
+        // Atualizar configurações da sala se fornecidas
+        if (data.room_settings) {
+          roomSettings.value.defaultTime = data.room_settings.default_time || 30
+          roomSettings.value.difficulty = data.room_settings.difficulty || 'normal'
+          difficulty.value = data.room_settings.difficulty || 'normal'
+          console.log('⚙️ Configurações da sala atualizadas (game_started):', roomSettings.value)
+        }
+
         addMessage('Sistema', '🎮 Jogo iniciado!')
         break
 
@@ -217,6 +241,37 @@ export const useGameStore = defineStore('game', () => {
         addMessage('Sistema', `Dificuldade alterada para: ${data.difficulty}`)
         break
 
+      case 'room_settings_updated':
+        if (data.settings) {
+          roomSettings.value.defaultTime = data.settings.default_time || 30
+          roomSettings.value.difficulty = data.settings.difficulty || 'normal'
+
+          // Mapear dificuldade do backend para exibição
+          const difficultyDisplay: Record<string, string> = {
+            'easy': 'Fácil',
+            'normal': 'Normal',
+            'caotic': 'Difícil'
+          }
+
+          // Atualizar a dificuldade do jogo (para compatibilidade com sistema existente)
+          const backendDifficulty: Record<string, string> = {
+            'fácil': 'easy',
+            'normal': 'normal',
+            'difícil': 'caotic'
+          }
+
+          const settingsDifficulty = data.settings.difficulty || 'normal'
+          difficulty.value = backendDifficulty[settingsDifficulty] || settingsDifficulty
+
+          const displayDiff = difficultyDisplay[difficulty.value] || settingsDifficulty
+          addMessage('Sistema', `⚙️ Configurações atualizadas: ${data.settings.default_time}s, ${displayDiff}`)
+        }
+        break
+
+      case 'settings_update_denied':
+        lastError.value = data.reason || 'Não foi possível alterar as configurações'
+        break
+
       case 'difficulty_change_denied':
         lastError.value = data.reason || 'Não foi possível alterar a dificuldade'
         break
@@ -227,13 +282,24 @@ export const useGameStore = defineStore('game', () => {
 
       case 'word_rejected':
         lastError.value = data.reason || 'Palavra rejeitada'
-        addMessage('Sistema', `❌ Palavra rejeitada: ${data.reason}`)
+        // Mostrar a tentativa no chat para todos verem
+        const rejectedWord = data.word || 'palavra'
+        const rejectedByPlayer = data.player || 'Alguém'
+        addMessage(rejectedByPlayer, `${rejectedWord} ❌`)
+        addMessage('Sistema', `❌ "${rejectedWord}" foi rejeitada: ${data.reason}`)
         break
 
       case 'timer_started':
         timerActive.value = true
-        remainingTime.value = data.remaining_time || 30
+        // Usar o tempo das configurações da sala se remaining_time não estiver disponível
+        const startTime = data.remaining_time || roomSettings.value.defaultTime || 30
+        remainingTime.value = startTime
         currentPlayer.value = data.current_player || null
+        console.log('🕐 Timer iniciado:', {
+          received_time: data.remaining_time,
+          room_default: roomSettings.value.defaultTime,
+          final_time: startTime
+        })
         break
 
       case 'timer_update':
@@ -357,6 +423,43 @@ export const useGameStore = defineStore('game', () => {
     lastError.value = ''
   }
 
+  // Funções de configuração
+  function updateRoomSettings(settings: { defaultTime?: number; difficulty?: string }): void {
+    console.log('📤 updateRoomSettings chamado com:', settings)
+    console.log('📊 Estado atual roomSettings:', roomSettings.value)
+
+    if (settings.defaultTime !== undefined) {
+      roomSettings.value.defaultTime = settings.defaultTime
+      console.log('🕐 defaultTime atualizado para:', settings.defaultTime)
+    }
+    if (settings.difficulty !== undefined) {
+      roomSettings.value.difficulty = settings.difficulty
+      console.log('⚙️ difficulty atualizada para:', settings.difficulty)
+    }
+
+    console.log('📊 Novo estado roomSettings:', roomSettings.value)
+
+    // Enviar configurações para o servidor
+    if (socket.value && amIHost.value) {
+      // Converter camelCase para snake_case para o backend
+      const payload = {
+        game_id: gameId.value,
+        settings: {
+          default_time: roomSettings.value.defaultTime,
+          difficulty: roomSettings.value.difficulty
+        }
+      }
+      console.log('🚀 Enviando configurações para servidor:', payload)
+      socket.value.emit('update_room_settings', payload)
+    } else {
+      console.log('❌ Não foi possível enviar para servidor:', {
+        hasSocket: !!socket.value,
+        isHost: amIHost.value,
+        gameId: gameId.value
+      })
+    }
+  }
+
   return {
     // Estado
     socket,
@@ -374,6 +477,7 @@ export const useGameStore = defineStore('game', () => {
     hostId,
     messages,
     lastError,
+    roomSettings,
 
     // Timer state
     remainingTime,
@@ -394,6 +498,7 @@ export const useGameStore = defineStore('game', () => {
     leaveGame,
     resetState,
     addMessage,
-    clearError
+    clearError,
+    updateRoomSettings
   }
 })
