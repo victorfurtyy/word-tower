@@ -6,206 +6,128 @@ _Projeto desenvolvido para a disciplina de Programação I (Ciência da Computa�
 
 ---
 
-## 📖 Sumário
-
-1. [Como Rodar a Aplicação](#-como-rodar-a-aplicação)
-2. [Como Jogar](#-como-jogar)
-3. [Regras do Jogo](#-regras-do-jogo)
-4. [Tecnologias](#-tecnologias)
-
----
-
 ## 🚀 Como Rodar a Aplicação
 
-### Windows
+### 📋 Pré-requisitos
 
-#### Pré-requisitos
+- **Python 3.8+** ([Download](https://www.python.org/downloads/))
+- **Node.js 20+** ([Download](https://nodejs.org/))
 
-- Python 3.8+ ([Download](https://www.python.org/downloads/))
-- Node.js 16+ ([Download](https://nodejs.org/))
-- Git ([Download](https://git-scm.com/download/win))
+### 🛠️ Instalação
 
-#### Passo a Passo
+#### Opção 1: Instalação Simples (pip global)
 
-**1. Clone o repositório**
-
-```cmd
+```bash
+# 1. Clone o projeto
 git clone https://github.com/KJSS3012/word-tower.git
 cd word-tower
+
+# 2. Instalar dependências Python
+cd back
+pip install -r requirements.txt
+
+# 3. Instalar dependências Node.js (novo terminal)
+cd ../front
+npm install
 ```
 
-**2. Configure o Backend**
+#### Opção 2: Instalação com Ambiente Virtual (Recomendado)
 
-```cmd
+```bash
+# 1. Clone o projeto
+git clone https://github.com/KJSS3012/word-tower.git
+cd word-tower
+
+# 2. Criar ambiente virtual
 cd back
-pip install fastapi uvicorn python-socketio
+python -m venv venv
+
+# 3. Ativar ambiente virtual
+# Windows:
+venv\Scripts\activate
+# Linux/macOS:
+source venv/bin/activate
+
+# 4. Instalar dependências Python
+pip install -r requirements.txt
+
+# 5. Instalar dependências Node.js (novo terminal)
+cd ../front
+npm install
+```
+
+### ▶️ Executar
+
+**Terminal 1 - Backend:**
+
+```bash
+cd back
 python -m app.main
 ```
 
-_Backend rodará em `http://localhost:8000`_
+> Backend rodará em `http://localhost:8000`
 
-**3. Configure o Frontend (nova janela do terminal)**
-
-```cmd
-cd front
-npm install
-npm run dev
-```
-
-_Frontend rodará em `http://localhost:5173`_
-
-**4. Acesse o jogo**
-
-- Abra `http://localhost:5173` no navegador
-- Crie ou entre em uma sala
-- Convide amigos compartilhando o link da sala!
-
-### Linux
-
-#### Pré-requisitos
-
-```bash
-# Ubuntu/Debian
-sudo apt update
-sudo apt install python3 python3-pip nodejs npm git
-
-# Arch Linux
-sudo pacman -S python python-pip nodejs npm git
-
-# CentOS/RHEL
-sudo yum install python3 python3-pip nodejs npm git
-```
-
-#### Passo a Passo
-
-**1. Clone o repositório**
-
-```bash
-git clone https://github.com/KJSS3012/word-tower.git
-cd word-tower
-```
-
-**2. Configure o Backend**
-
-```bash
-cd back
-pip3 install fastapi uvicorn python-socketio
-python3 -m app.main
-```
-
-_Backend rodará em `http://localhost:8000`_
-
-**3. Configure o Frontend (novo terminal)**
+**Terminal 2 - Frontend:**
 
 ```bash
 cd front
-npm install
 npm run dev
 ```
 
-_Frontend rodará em `http://localhost:5173`_
+> Frontend rodará em `http://localhost:5173`
 
-**4. Acesse o jogo**
+### 🌐 Acessar
 
-- Abra `http://localhost:5173` no navegador
-- Crie ou entre em uma sala
-- Convide amigos compartilhando o link da sala!
+Abra `http://localhost:5173` no navegador e divirta-se!
 
 ---
 
 ## 🎮 Como Jogar
 
-### Objetivo
+### 🚪 Entrando no Jogo
 
-Ser o último jogador sobrevivente! Digite palavras válidas que comecem com a letra indicada antes que o tempo acabe.
+1. **Crie uma sala** ou **entre em uma existente** usando o código
+2. **Aguarde outros jogadores** (mínimo 2 para iniciar)
+3. **Host inicia o jogo** quando todos estiverem prontos
 
-### Fluxo do Jogo
+### 🎯 Objetivo
 
-**1. Entrando na Sala**
+Formar uma "torre de palavras" onde cada palavra deve começar com a **última letra** da palavra anterior.
 
-- Acesse o jogo pelo navegador
-- Digite seu nome de jogador
-- Crie uma nova sala ou entre em uma existente
+### ⏰ Sistema de Tempo
 
-**2. Configuração (apenas o host)**
+- **30 segundos** por turno (configurável)
+- **Timer visual** mostra tempo restante
+- **Eliminação automática** quando tempo esgota
 
-- **Fácil**: Palavras sem acentos, próxima letra sempre vem do final
-- **Normal**: Palavras com acentos, próxima letra sempre vem do final
-- **Caótico**: Palavras com acentos, próxima letra vem de posição aleatória
+### 🏆 Vitória
 
-**3. Durante o Jogo**
-
-- Uma palavra inicial é sorteada automaticamente
-- Cada jogador tem **30 segundos** para digitar uma palavra válida
-- A palavra deve começar com a letra destacada
-- Timer reinicia a cada palavra aceita
-- **Palavra errada = -5 segundos de penalidade**
-- **Tempo zerado = eliminação definitiva**
-
-**4. Condições de Vitória**
-
-- Último jogador ativo vence a partida
-- Jogo reinicia automaticamente após vitória
-- Jogadores desconectados são automaticamente eliminados
-
-### Exemplos de Gameplay
-
-**Modo Normal:**
-
-```
-Palavra atual: "CASA"
-Próxima letra: "A" (sempre a última)
-Você digita: "ABACAXI"
-Nova palavra: "ABACAXI"
-Próxima letra: "I"
-```
-
-**Modo Caótico:**
-
-```
-Palavra atual: "BRASIL"
-Próxima letra: "A" (sorteada aleatoriamente)
-Você digita: "AVIÃO"
-Nova palavra: "AVIÃO"
-Próxima letra: "I" (nova posição sorteada)
-```
-
-### Dicas de Estratégia
-
-- 🧠 **Pense rápido**: 30 segundos passam voando!
-- 📚 **Vocabulário amplo**: Quanto mais palavras você souber, melhor
-- ⚡ **Mode Caótico**: Mais desafiador, qualquer letra pode sair
-- 🎯 **Evite erros**: Penalidades de tempo são fatais
-- 🤝 **Jogue em grupo**: Mais divertido com 3-6 jogadores
+- **Último jogador ativo** vence a rodada
+- **Jogo reinicia** automaticamente para nova partida
 
 ---
 
-## 📋 Regras do Jogo
+## 📝 Regras do Jogo
 
-### Regras Básicas
+### ✅ Palavra Válida
 
-- ✅ **Objetivo**: Sobreviver sendo o último jogador ativo
-- ⏱️ **Tempo**: 30 segundos por turno + reinicia a cada palavra aceita
-- 🔤 **Validação**: Palavras verificadas em dicionário português
-- ❌ **Penalização**: -5 segundos por palavra incorreta
-- 💀 **Eliminação**: Tempo zerado = fora do jogo
-- 🔄 **Desconexão**: Jogador sai = eliminação automática
+- Deve começar com a **letra correta**
+- Deve ser uma **palavra real** (verificada no dicionário)
+- **Não pode repetir** palavras já usadas
 
-### Modos de Dificuldade
+### ❌ Palavra Inválida
 
-| Modo               | Dicionário | Próxima Letra       | Dificuldade |
-| ------------------ | ----------- | -------------------- | ----------- |
-| **Fácil**   | Sem acentos | Última posição    | ⭐          |
-| **Normal**   | Com acentos | Última posição    | ⭐⭐        |
-| **Caótico** | Com acentos | Posição aleatória | ⭐⭐⭐      |
+- **Letra errada**: Eliminação imediata
+- **Palavra inexistente**: Eliminação imediata
+- **Palavra repetida**: Eliminação imediata
 
-### Sistema de Turnos
+### 🎲 Dificuldades
 
-- 🎲 **Início**: Palavra inicial sorteada automaticamente
-- 🔄 **Alternância**: Jogadores se revezam em ordem
-- ⏰ **Timer**: 30s por jogador, reinicia após palavra aceita
-- 🎯 **Continuidade**: Jogo continua mesmo se jogadores saírem
-- 🏆 **Vitória**: Último ativo vence, jogo reinicia em 5s
+| Dificuldade | Dicionário  | Próxima Letra     | Desafio |
+| ----------- | ----------- | ----------------- | ------- |
+| **Fácil**   | Sem acentos | Última letra      | ⭐      |
+| **Normal**  | Com acentos | Última letra      | ⭐⭐    |
+| **Caótico** | Com acentos | Posição aleatória | ⭐⭐⭐  |
 
 ---
 
@@ -214,8 +136,8 @@ Próxima letra: "I" (nova posição sorteada)
 ### Backend
 
 - **Python 3.8+**: Linguagem principal
-- **FastAPI**: Framework web moderno e rápido
 - **Socket.IO**: Comunicação em tempo real
+- **uvicorn**: Servidor ASGI para WebSockets
 - **AsyncIO**: Programação assíncrona para timers
 
 ### Frontend
@@ -223,12 +145,35 @@ Próxima letra: "I" (nova posição sorteada)
 - **Vue 3**: Framework reativo moderno
 - **TypeScript**: Tipagem estática
 - **Pinia**: Gerenciamento de estado
-- **Vite**: Build tool rápido
+- **Socket.IO Client**: Comunicação real-time
 
 ### Comunicação
 
 - **WebSocket**: Tempo real para gameplay
 - **JSON**: Formato de troca de dados
+
+---
+
+## 📦 Dependências
+
+### Backend (Python)
+
+```txt
+uvicorn[standard]==0.24.0    # Servidor ASGI
+python-socketio[asyncio]==5.10.0    # Socket.IO server
+```
+
+### Frontend (Node.js)
+
+```json
+{
+  "vue": "^3.5.18",
+  "typescript": "latest",
+  "pinia": "^3.0.3",
+  "socket.io-client": "^4.8.1",
+  "vue-router": "^4.5.1"
+}
+```
 
 ---
 
