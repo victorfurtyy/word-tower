@@ -78,8 +78,11 @@ export const useGameStore = defineStore('game', () => {
     // Limpar o nome pendente do localStorage
     localStorage.removeItem('pendingPlayerName')
 
-    // Conecta ao Socket.IO - backend em localhost:8000
-    socket.value = io('http://localhost:8000', {
+    // Conecta ao Socket.IO usando variável de ambiente VITE_SOCKET_URL (configurável no Vercel)
+    // Fallback para localhost:8000 para desenvolvimento local
+    const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL as string) || 'http://localhost:8000'
+
+    socket.value = io(SOCKET_URL, {
       transports: ['websocket', 'polling']
     })
 
