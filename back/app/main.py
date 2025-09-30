@@ -7,4 +7,8 @@ import uvicorn
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 if __name__ == "__main__":
-    uvicorn.run("app.ws.game_manager:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    reload = os.getenv("UVICORN_RELOAD", "False").lower() in ("1", "true", "yes")
+
+    uvicorn.run("app.ws.game_manager:app", host=host, port=port, reload=reload)

@@ -2,6 +2,7 @@ import json
 import random
 import asyncio
 import time
+import os
 from typing import Optional
 
 import socketio
@@ -12,9 +13,15 @@ TURN_TIME_LIMIT = 30
 PENALTY_TIME = 5
 MIN_TIME_REMAINING = 3
 
+sockets_cors_env = os.getenv("SOCKET_CORS_ORIGINS", "http://localhost:5173")
+if sockets_cors_env.strip() == "*":
+    cors_allowed = "*"
+else:
+    cors_allowed = [o.strip() for o in sockets_cors_env.split(",") if o.strip()]
+
 sio = socketio.AsyncServer(
-    async_mode='asgi', 
-    cors_allowed_origins=['http://localhost:5173']
+    async_mode='asgi',
+    cors_allowed_origins=cors_allowed
 )
 app = socketio.ASGIApp(sio)
 
